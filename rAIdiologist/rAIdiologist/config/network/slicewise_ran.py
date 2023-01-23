@@ -150,7 +150,7 @@ class RAN_25D(nn.Module):
 
         if not self.exclude_top:
             if self.return_top:
-                return_x = x
+                sw_prediction = x
             x = self.forward_top(B, nonzero_slice, x)
 
         if self.sigmoid_out:
@@ -158,7 +158,7 @@ class RAN_25D(nn.Module):
         if not self.return_top:
             return x
         else:
-            return x, return_x
+            return x, sw_prediction
 
     def forward_top(self, B, nonzero_slice, x) -> torch.Tensor:
         r"""Output FC layer that collapse slicewise prediction to a single prediction.
@@ -294,12 +294,12 @@ class SlicewiseAttentionRAN(RAN_25D):
 
         if not self.exclude_top:
             if self.return_top:
-                _ = x
+                sw_prediction = x
             x = self.forward_top(B, nonzero_slice, x)
         if self.sigmoid_out:
             x = torch.sigmoid(x)
         if self.return_top:
-            return x, _
+            return x, sw_prediction
         else:
             return x
 

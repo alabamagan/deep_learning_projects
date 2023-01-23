@@ -65,9 +65,6 @@ class rAIdiologist(nn.Module):
         r"""
         ! When CNN is not to be trained the batchnorm in it should be turn of running stats track, the dropouts should
         ! be set to 0 too.
-        ! be set to 0 too.
-        :param mode:
-        :return:
         """
         if mode == 0:
             for p in self.parameters():
@@ -457,15 +454,8 @@ class LSTM_rater(nn.Module):
     def get_playback(self):
         return self.play_back
 
-
-class LSTM_rater_v2(Transformer_rater):
-    def __init__(self, in_ch, **kwargs):
-        super(LSTM_rater_v2, self).__init__(in_ch, **kwargs)
-
-        self.lstm_reviewer = nn.LSTM(in_ch, 100, batch_first=True, bias=True, bidirectional=True)
-        self.out_fc = nn.Linear(100 * 2, 2)
-
 class rAIdiologist_v2(rAIdiologist):
+    r"""This uses RAN_25D instead of SWRAN."""
     def __init__(self, out_ch=2, record=False, iter_limit=5, dropout=0.2, lstm_dropout=0.1, bidirectional=False,
                  reduce_strats = 'max'):
         super(rAIdiologist_v2, self).__init__(out_ch = out_ch,
@@ -477,4 +467,86 @@ class rAIdiologist_v2(rAIdiologist):
                                               )
 
         # self.lstm_rater = LSTM_rater_v2(2048, record=record, iter_limit=iter_limit, dropout=lstm_dropout)
-        self.cnn = RAN_25D(1, out_ch, exclude_fc=True, sigmoid_out=False, dropout=dropout, reduce_strats='mean')
+        self.cnn = RAN_25D(1, out_ch, exclude_fc=True, sigmoid_out=False, reduce_strats='mean', dropout=dropout)
+
+class rAIdiologist_v3(rAIdiologist):
+    r"""This is a new structure which attempts to weight """
+    def __init__(self, *args, **kwargs):
+        super(rAIdiologist_v3, self).__init__(*args, **kwargs)
+        self.cnn.return_top = True
+        self.cnn.exclude_top = False
+        self.register_parameter('sw_weight', nn.Parameter(torch.Tensor([0.]))) # is weights the output between cnn and lstm decision
+
+    def forward_(self, x):
+        # input is x: (B x 1 x H x W x S) seg: (B x 1 x H x W x S)
+        while x.dim() < 5:
+            x = x.unsqueeze(0)
+        nonzero_slices, top_slices = self.get_nonzero_slices(x)
+
+        reduced_x, x = self.cnn(x)     # Shape -> (B x 2048 x S)
+        x = self.dropout(x)
+        while x.dim() < 3:
+            x = x.unsqueeze(0)
+        x = x.permute(0, 2, 1).contiguous() # (B x C x S) -> (B x S x C)
+
+        # o: (B x S x out_ch)
+        o = self.lstm_rater(self.lstm_prelayernorm(x).permute(0, 2, 1),
+                            torch.as_tensor(top_slices).int() + 1).contiguous()
+
+        if self._mode == 1 or self._mode == 2:
+            # (B x S x C) -> (B x C x S) -> (B x C)
+            # !!this following line is suppose to be correct, but there's a bug in torch such that it returns a vector
+            # !!with same value when C = 1
+            # !!o = F.adaptive_max_pool1d(o.permute(0, 2, 1), 1).squeeze(2)
+            chan_size = o.shape[-1]
+            o = F.adaptive_max_pool1d(o.permute(0, 2, 1).squeeze(1), 1).view(-1, chan_size)
+            # o = torch.stack([o[i,j] for i, j in zero_slices.items()], dim=0)
+        elif self._mode == 3 or self._mode == 4 or self._mode == 5:
+            # Loop batch
+            _o = []
+
+            num_ch = o.shape[-1]
+
+            for i in nonzero_slices:
+                # output of bidirectional LSTM: (B x S x 2 x C), where for 3rd dim, 0 is forward and 1 is reverse
+                # say input is [0, 1, 2, 3, 4], output is arranged:
+                #   [[0, 1, 2, 3, 4],
+                #    [4, 3, 2, 1, 0]]
+                # So if input is padded say [0, 1, 2, 3, 4, 0, 0], output is arranged:
+                #   [[0, 1, 2, 3, 4, 0, 0],
+                #    [0, 0, 4, 3, 2, 1, 0]]
+                # Therefore, for forward run, gets the element before padding, and for the reverse run, get the
+                # last element.
+                # !Update:
+                # Changed to use packed sequence, such that this now both forward and backward is at `top_slices`.
+                _o_forward  = torch.narrow(o[i, :], 0, top_slices[i], 1) # forward run is padded after top_slices
+                _o.append(_o_forward)
+
+            if self.RECORD_ON:
+                self.play_back.extend(self.lstm_rater.get_playback())
+                self.lstm_rater.clean_playback()
+
+            if len(o) > 1:
+                o = torch.cat(_o)
+            else:
+                o = _o[0]
+            del _o
+        else:
+            raise AttributeError(f"Got wrong mode: {self._mode}, can only be one of [1|2|3|4|5].")
+
+        weight = torch.sigmoid(self.sw_weight)
+        o = o * weight + reduced_x * (1 - weight)
+        return o
+
+    def forward_swran(self, *args):
+        if len(args) > 0: # restrict input to only a single image
+            x, _ = self.cnn.forward(args[0])
+            return x
+        else:
+            x, _ = self.cnn.forward(*args)
+            return x
+
+    def set_mode(self, mode):
+        r"""For v3, `exclude_fc` of `self.cnn` is always `False`."""
+        super(rAIdiologist_v3, self).set_mode(mode)
+        self.cnn.exclude_top = False
