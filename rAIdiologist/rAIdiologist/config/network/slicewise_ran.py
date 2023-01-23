@@ -10,7 +10,11 @@ from  pytorch_med_imaging.networks.third_party_nets.spacecutter import LogisticC
 __all__ = ['SlicewiseAttentionRAN', 'AttentionRAN_25D', 'OrdinalSlicewiseAttentionRAN', 'AttentionRAN_25D_MSE', 'RAN_25D']
 
 class RAN_25D(nn.Module):
-    r"""
+    r"""This is a 2.5D network that will process the image volume and give a prediction of specified channel.
+
+    This is a modification of the Residual attention network, which was originally developed for 2D classification. In
+    this network, the input convolutional is modified ot have a kernel of 3×3×3 whereas the rest of the conv kernels in
+    the truck and the attention branches are all modified to
 
 
     Attributes:
@@ -27,6 +31,10 @@ class RAN_25D(nn.Module):
             If `True`, the slice attention would be saved for use (CPU memory). Default to `False`.
         exclude_fc (bool, Optional):
             If `True`, the output FC layer would be excluded.
+        dropout (float, Optional):
+            Dropouts for residual blocks. Default to 0.1.
+        return_top (bool, Optional):
+            Whether to also return the slicewise prediction. Must be have `exclude_fc` set to `False`.
 
     """
     _strats_dict = {
@@ -42,12 +50,14 @@ class RAN_25D(nn.Module):
                  exclude_fc: Optional[bool] = False,
                  sigmoid_out: Optional[bool] = False,
                  reduce_strats: Optional[str] = 'max',
-                 dropout: Optional[float] = 0.1):
+                 dropout: Optional[float] = 0.1,
+                 return_top: Optional[bool] = False):
 
         super(RAN_25D, self).__init__()
 
-        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 1], stride=[1, 1, 1], padding=[1, 1, 0])
+        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 3], stride=[1, 1, 1], padding=[1, 1, 1])
         self.exclude_top = exclude_fc # Normally you don't have to use this.
+        self.return_top = return_top # Normally you don't have to use this
         self.sigmoid_out = sigmoid_out
 
         # RAN
@@ -60,9 +70,11 @@ class RAN_25D(nn.Module):
         self.out_conv1 = ResidualBlock3d(1024, 2048, p=dropout)
 
         # Output layer
-        self.out_fc1 = nn.Sequential(
-            nn.Linear(2048, out_ch),
+        self.out_bn = nn.Sequential(
+            nn.BatchNorm1d(2048),
+            nn.ReLU(inplace=True)
         )
+        self.out_fc1 = nn.Linear(2048, out_ch)
 
         # Reduce strategy
         if reduce_strats not in self._strats_dict:
@@ -101,25 +113,6 @@ class RAN_25D(nn.Module):
         top_slices = [min(x.shape[-1], nonzero_slices[i][1] + added_radius) for i in range(len(nonzero_slices))]
         return nonzero_slices, top_slices
 
-    @staticmethod
-    def generate_mask_tensor(x):
-        r"""Generates :class:`torch.MaskedTensor` that masks the zero padded slice.
-
-        Args:
-            x (torch.Tensor):
-                Tensor input with size :math:`(B × C × H × W × S)`. The zero padding should be done for the :math:`S`
-                dimension.
-
-        Returns:
-            torch.MaskedTensor: Tensor with size :math:`(B × S)`.
-
-        """
-        nonzero_slices, _ = self.get_nonzero_slices(x)
-        mask = torch.zeros([x.shape[0], x.shape[1]], dtype=torch.BoolType)
-        for i, (bot_slice, top_slice) in nonzero_slices.items():
-            mask[i, bot_slice:top_slice + 1].fill_(True)
-        return torch.Masked
-
     def forward(self,
                 x: torch.Tensor):
         r"""Expect input :math:`(B × in_{ch} × H × W × S)`, output (B × out_ch)
@@ -151,27 +144,50 @@ class RAN_25D(nn.Module):
         x = self.out_conv1(x)
 
         # order of slicewise attention and max pool makes no differences because pooling is within slice
-        x = F.adaptive_max_pool3d(x, [1, 1, None]).squeeze()
+        x = F.adaptive_max_pool3d(x, [1, 1, None]).squeeze() # x: (B x C x S)
         if x.dim() < 3:
             x = x.unsqueeze(0)
 
-
         if not self.exclude_top:
-            x = self.out_fc1(x.permute(0, 2, 1))
+            if self.return_top:
+                return_x = x
+            x = self.forward_top(B, nonzero_slice, x)
 
-            # Get best prediction across the slices
-            if self.reduce_strats == 0:
-                x = torch.stack([x[i, p[0]:p[1]+1].max(dim=0).values for i, p in nonzero_slice.items()])
-            elif self.reduce_strats == 1:
-                x = torch.stack([x[i, p[0]:p[1]+1].min(dim=0).values for i, p in nonzero_slice.items()])
-            elif self.reduce_strats == 2:
-                x = torch.stack([x[i, p[0]:p[1]+1].mean(dim=0) for i, p in nonzero_slice.items()])
-
-            if x.dim() < 2:
-                x.view(B, -1)
         if self.sigmoid_out:
             x = torch.sigmoid(x)
+        if not self.return_top:
+            return x
+        else:
+            return x, return_x
+
+    def forward_top(self, B, nonzero_slice, x) -> torch.Tensor:
+        r"""Output FC layer that collapse slicewise prediction to a single prediction.
+
+        Args:
+            B (int):
+                Mini-batch size
+            nonzero_slice (dict):
+                Non-zero slice got from :func:`get_nonzero_slices`
+            x (torch.Tensor):
+                Tensor.
+
+        Returns:
+            torch.Tensor
+
+        """
+        x = self.out_fc1(self.out_bn(x).permute(0, 2, 1))
+        # Get best prediction across the slices, note that first conv layer is [3 × 3 × 3] that eats the first and
+        # the last slice, so we are not going to take them into account
+        if self.reduce_strats == 0:
+            x = torch.stack([x[i, p[0] + 1:p[1]].max(dim=0).values for i, p in nonzero_slice.items()])
+        elif self.reduce_strats == 1:
+            x = torch.stack([x[i, p[0] + 1:p[1]].min(dim=0).values for i, p in nonzero_slice.items()])
+        elif self.reduce_strats == 2:
+            x = torch.stack([x[i, p[0] + 1:p[1]].mean(dim=0) for i, p in nonzero_slice.items()])
+        if x.dim() < 2:
+            x.view(B, -1)
         return x
+
 
 class SlicewiseAttentionRAN(RAN_25D):
     r"""
@@ -191,6 +207,10 @@ class SlicewiseAttentionRAN(RAN_25D):
             If `True`, the slice attention would be saved for use (CPU memory). Default to `False`.
         exclude_fc (bool, Optional):
             If `True`, the output FC layer would be excluded.
+        dropout (float, Optional):
+            Drop out for residual blocks. Default to 0.1.
+        return_top (bool, Optional):
+            If `True`, this will returns also the slicewise prediction. Default to `False`.
 
     """
     _strats_dict = {
@@ -209,19 +229,16 @@ class SlicewiseAttentionRAN(RAN_25D):
                  exclude_fc: Optional[bool] = False,
                  sigmoid_out: Optional[bool] = False,
                  reduce_strats: Optional[str] = 'max',
-                 dropout: Optional[float] = 0.1):
+                 dropout: Optional[float] = 0.1,
+                 return_top: Optional[bool] = False):
 
-        super(SlicewiseAttentionRAN, self).__init__(
-                 in_ch        = in_ch        ,
-                 out_ch       = out_ch       ,
-                 first_conv_ch= first_conv_ch,
-                 exclude_fc   = exclude_fc   ,
-                 sigmoid_out  = sigmoid_out  ,
-                 reduce_strats= reduce_strats,
-                 dropout      = dropout)
+        super(SlicewiseAttentionRAN, self).__init__(in_ch=in_ch, out_ch=out_ch, first_conv_ch=first_conv_ch,
+                                                    exclude_fc=exclude_fc, sigmoid_out=sigmoid_out,
+                                                    reduce_strats=reduce_strats, dropout=dropout,
+                                                    return_top=return_top)
 
         self.save_weight=save_weight
-        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 1], stride=[1, 1, 1], padding=[1, 1, 0])
+        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 3], stride=[1, 1, 1], padding=[1, 1, 1])
         self.exclude_top = exclude_fc # Normally you don't have to use this.
         self.sigmoid_out = sigmoid_out
 
@@ -276,21 +293,15 @@ class SlicewiseAttentionRAN(RAN_25D):
             x = x.unsqueeze(0)
 
         if not self.exclude_top:
-            x = self.out_fc1(x.permute(0, 2, 1))
-
-            # Get best prediction across the slices
-            if self.reduce_strats == 0:
-                x = torch.stack([x[i, p[0]:p[1]+1].max(dim=0).values for i, p in nonzero_slice.items()])
-            elif self.reduce_strats == 1:
-                x = torch.stack([x[i, p[0]:p[1]+1].min(dim=0).values for i, p in nonzero_slice.items()])
-            elif self.reduce_strats == 2:
-                x = torch.stack([x[i, p[0]:p[1]+1].mean(dim=0).values for i, p in nonzero_slice.items()])
-
-            if x.dim() < 2:
-                x.view(B, -1)
+            if self.return_top:
+                _ = x
+            x = self.forward_top(B, nonzero_slice, x)
         if self.sigmoid_out:
             x = torch.sigmoid(x)
-        return x
+        if self.return_top:
+            return x, _
+        else:
+            return x
 
 
     def get_mask(self):
