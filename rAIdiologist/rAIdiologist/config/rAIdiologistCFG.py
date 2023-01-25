@@ -20,7 +20,7 @@ data_loader = PMIImageFeaturePairLoaderCFG(
     tio_queue_kwargs = dict(            # dict passed to ``tio.Queue``
         max_length             = 15,
         samples_per_volume     = 1,
-        num_workers            = 4,
+        num_workers            = 8,
         shuffle_subjects       = True,
         shuffle_patches        = True,
         start_background       = True,
@@ -40,11 +40,15 @@ class MySolverCFG(rAIdiologistSolverCFG):
     unpack_key_forward   = ['input'  , 'gt']
     unpack_key_inference = ['input']
 
-    class_weights = [1.2] # class weight for NPC +ve
+    class_weights = [1] # class weight for NPC +ve
 
     plot_to_tb = True
     early_stop = 'loss_reference'
-    early_stop_kwargs = {'warmup': 40, 'patience': 15}
+    early_stop_kwargs = {'warmup': 100, 'patience': 15}
+    accumulate_grad = 4
+
+    lr_sche = 'ExponentialLR'
+    lr_sche_args = [0.99]
 
 
 class MyControllerCFG(PMIControllerCFG):

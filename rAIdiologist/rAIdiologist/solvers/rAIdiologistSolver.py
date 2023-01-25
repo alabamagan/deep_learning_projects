@@ -124,7 +124,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         if not current_mode == self._current_mode:
             self._logger.info(f"Setting rAIdiologist mode to {current_mode}")
             self._current_mode = current_mode
-            if isinstance(self.net, torch.nn.DataParallel):
+            if isinstance(self.net, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)):
                 self.net.get_submodule('module').set_mode(self._current_mode)
             else:
                 self.net.set_mode(self._current_mode)

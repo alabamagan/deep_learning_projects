@@ -23,7 +23,8 @@ class rAIdiologist(nn.Module):
         self.play_back = []
         # Create inception for 2D prediction
         #!   Note that sigmoid_out should be ``False`` when the loss is already `WithLogits`.
-        self.cnn = SlicewiseAttentionRAN(1, out_ch, exclude_fc=True, sigmoid_out=False, dropout=dropout)
+        self.cnn = SlicewiseAttentionRAN(1, out_ch, exclude_fc=True, sigmoid_out=False, dropout=dropout,
+                                         reduce_strats='mean')
         self.dropout = nn.Dropout(p=dropout)
 
         # LSTM for
