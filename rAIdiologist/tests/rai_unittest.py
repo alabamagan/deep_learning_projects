@@ -11,6 +11,7 @@ import unittest
 import torch
 from mnts.mnts_logger import MNTSLogger
 from pytorch_med_imaging.controller import PMIController
+from pytorch_model_summary.model_summary import summary
 
 class Test3DNetworks(unittest.TestCase):
     def __init__(self, *args, **kwargs):
@@ -33,9 +34,10 @@ class Test3DNetworks(unittest.TestCase):
         self.expect_nonzero = torch.zeros([num_data, 1, num_slice], dtype=bool)
         self.expect_nonzero[0, ..., 9:21] = True
         self.expect_nonzero[1, ..., 7:16] = True
+        self.net = rAIdiologist(1, record=False).cuda()
 
     def test_rAIdiologist(self):
-        net = rAIdiologist(1, record=False).cuda()
+        net = self.net
         with torch.no_grad():
             for i in range(6):
                 try:
@@ -49,9 +51,8 @@ class Test3DNetworks(unittest.TestCase):
                 except Exception as e:
                     self.fail(f"Mode {i} error. Original message {e}")
 
-
     def test_rAIdiologist_ch1(self):
-        net = rAIdiologist(out_ch=1, record=False).cuda()
+        net = self.net
         with torch.no_grad():
             for i in range(6):
                 try:
@@ -64,7 +65,8 @@ class Test3DNetworks(unittest.TestCase):
                     self.fail(f"Mode {i} error. Original message {e}")
 
     def test_rAIdiologist_recordon(self):
-        net = rAIdiologist(out_ch=1, record=True).cuda()
+        net = self.net
+        net.RECORD_ON = True
         net.set_mode(5)
         with torch.no_grad():
             try:
@@ -86,6 +88,25 @@ class Test3DNetworks(unittest.TestCase):
             self.sample_input[0, ..., -10:] = 0
             self.sample_input[1, ..., -13:] = 0
             out = net(self.sample_input)
+
+    def test_RAN_25D_struct(self):
+        net = RAN_25D(1, 1).cuda()
+        input_ten = torch.rand(1, 1, 350, 350, 40).cuda()
+        with torch.no_grad():
+            summary(net, input_ten, print_summary=True)
+
+class TestRAI_v3(Test3DNetworks):
+    def setUp(self) -> None:
+        super(TestRAI_v3, self).setUp()
+        self.net = rAIdiologist_v3(1, record=False).cuda()
+
+    @unittest.SkipTest
+    def test_RAN_25D(self):
+        pass
+
+    @unittest.SkipTest
+    def test_RAN_25D_struct(self):
+        pass
 
 class TestRAIController(unittest.TestCase):
     @classmethod
