@@ -22,7 +22,8 @@ global semaphore
 semaphore = Semaphore(mpi.cpu_count())
 
 def make_marked_slice(image: np.ndarray,
-                      prediction: Union[np.ndarray, Iterable[float]],
+                      cnn_prediction: Union[np.ndarray, Iterable[float]],
+                      lstm_prediction: Union[np.ndarray, Iterable[float]],
                       slice_indices: Union[np.ndarray, Iterable[int]],
                       direction: Union[np.ndarray, Iterable[int]],
                       vert_line: Optional[int] = None,
@@ -35,7 +36,9 @@ def make_marked_slice(image: np.ndarray,
     Args:
         image (np.ndarray):
             A 2D float array.
-        prediction (np.ndarray):
+        cnn_prediction (np.ndarray):
+            A vector of prediction values.
+        lstm_prediction (np.ndarray):
             A vector of prediction values.
         slice_indices (np.ndarray):
             A vector of the corresponding slices where the prediction were made.
@@ -70,24 +73,25 @@ def make_marked_slice(image: np.ndarray,
     RED_BOX_FLAG = False
     BLUE_BOX_FLAG = False
     for _direction in (0, 1):
-        _prediction = prediction[np.argwhere(direction == _direction).ravel()]
+        _prediction = lstm_prediction[np.argwhere(direction == _direction).ravel()]
         _slice_indices = slice_indices[np.argwhere(direction == _direction).ravel()]
         if len(_prediction) == 0 or len(_slice_indices) == 0:
             continue
-        _d_pred = np.concatenate([[0], np.diff(_prediction)])
+        _d_pred = np.concatenate([[0], np.diff(_prediction)]).ravel()
 
         # reverse the slice_indices for backward LSTM run
         if _direction == 1:
             _slice_indices = _slice_indices[::-1]
 
         # mark the slice if the gradient > 0.5 and the prediciton > 1.0, empirically determined
-        if _d_pred[vert_line] > 0.5 and _prediction[vert_line] > 1.0:
-            if _direction == 0:
-                RED_BOX_FLAG = True
-            else:
-                BLUE_BOX_FLAG = True
-        if _d_pred[vert_line] > 0.3:
-            AMBER_BOX_FLAG = True
+        if not vert_line is None:
+            if _d_pred[vert_line] > 0.5 and _prediction[vert_line] > 1.0:
+                if _direction == 0:
+                    RED_BOX_FLAG = True
+                else:
+                    BLUE_BOX_FLAG = True
+            if _d_pred[vert_line] > 0.3:
+                AMBER_BOX_FLAG = True
 
         # drop zero paddings
         i = 1
@@ -252,7 +256,9 @@ def unpack_json(json_file: Union[Path, str],
             The ID of target.
 
     Returns:
-        pred (np.ndarray):
+        cnn_pred (np.ndarray):
+            The predictions as float values from CNN branch of rAIdiologist_v3.
+        lstm_pred (np.ndarray):
             The predictions as float values.
         direction (np.ndarray):
             The direction if the read as integer. If 0, the predictions were generate during forward read by LSTM. If 1,
@@ -266,10 +272,17 @@ def unpack_json(json_file: Union[Path, str],
     if id not in json_dat:
         raise KeyError(f"The specified id {id} does not exist in target json file.")
 
-    pred      = np.asarray(json_dat[id])[..., 0].ravel()
-    direction = np.asarray(json_dat[id])[... , 1].ravel()
-    sindex    = np.asarray(json_dat[id])[..., -1].ravel()
-    return pred, sindex, direction
+    if json_dat[id].shape[0] == 4:
+        cnn_pred  = np.asarray(json_dat[id])[..., 0].ravel()
+        lstm_pred = np.asarray(json_dat[id])[..., 1].ravel()
+        direction = np.asarray(json_dat[id])[..., 2].ravel()
+        sindex    = np.asarray(json_dat[id])[..., -1].ravel()
+    else:
+        cnn_pred = None
+        lstm_pred = np.asarray(json_dat[id])[..., 0].ravel()
+        direction = np.asarray(json_dat[id])[..., 1].ravel()
+        sindex    = np.asarray(json_dat[id])[..., -1].ravel()
+    return cnn_pred, lstm_pred, sindex, direction
 
 def label_images_in_dir(img_src: Union[Path, str],
                         json_file: Union[Path, str, dict],
@@ -312,18 +325,14 @@ def label_images_in_dir(img_src: Union[Path, str],
     pool = mpi.Pool(num_worker)
     for k in json_dat.keys():
         logger.info(f"Processing {k}")
-        pred, indi, direction = unpack_json(json_dat, k)
-        try:
-            # decision points
-            decpt = np.asarray(json_dat[k])[..., -1].ravel()
-            decpt = int(indi[decpt])
-        except IndexError:
-            decpt = None
+        cnn_pred, lstm_pred, indi, direction = unpack_json(json_dat, k)
+
         _out_dir = out_dir.joinpath(f'{k}.gif')
         _im_dir = img_src.get_data_source(uids.index(k))
-        p[k] = pool.apply_async(_wrap_mpi_mark_image_stacks, args=[_im_dir, pred, indi, _out_dir, kwargs])
+        p[k] = pool.apply_async(_wrap_mpi_mark_image_stacks,
+                                args=[_im_dir, cnn_pred, lstm_pred, indi, _out_dir, kwargs])
         # _wrap_mpi_mark_image_stacks(_im_dir, pred, indi, _out_dir, kwargs)
-        del pred, indi
+        del lstm_pred, indi
 
     for k in p:
         p[k].get()
@@ -332,12 +341,12 @@ def label_images_in_dir(img_src: Union[Path, str],
     pool.close()
     pool.join()
 
-def _wrap_mpi_mark_image_stacks(im_dir, pred, indi, outdir, kwargs):
+def _wrap_mpi_mark_image_stacks(im_dir, cnn_pred, lstm_pred, indi, outdir, kwargs):
     r"""Need this wrapper to keep memory usage reasonable"""
     global semaphore
     semaphore.acquire()
     im = tio.ScalarImage(im_dir)
-    stack = mark_image_stacks(im[tio.DATA].squeeze().permute(1, 2, 0), pred, indi, **kwargs)
+    stack = mark_image_stacks(im[tio.DATA].squeeze().permute(1, 2, 0), lstm_pred, indi, **kwargs)
     marked_stack_2_gif(stack, outdir)
     im.clear()
     semaphore.release()
