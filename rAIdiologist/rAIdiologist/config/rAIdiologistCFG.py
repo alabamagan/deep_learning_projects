@@ -13,10 +13,13 @@ data_loader = PMIImageFeaturePairLoaderCFG(
     input_dir     = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/01.NyulNormalized/',
     probmap_dir   = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/00.HuangMask/',
     target_dir    = './NPC_Segmentation/60.Large-Study/v1-All-Data/v2-datasheet.csv',
-    augmentation  = './v1_rAIdiologist_transform.yaml',
+    augmentation  = './v2_rAIdiologist_transform.yaml',
     target_column = 'is_malignant',
     id_globber    = "^[a-zA-Z]{0,3}[0-9]+",
-    sampler = None, # Unset sampler to load the whole image
+    sampler       = 'weighted', # Unset sampler to load the whole image
+    sampler_kwargs    = dict(
+        patch_size = [325, 325, 25]
+    ),
     tio_queue_kwargs = dict(            # dict passed to ``tio.Queue``
         max_length             = 15,
         samples_per_volume     = 1,
@@ -49,6 +52,7 @@ class MySolverCFG(rAIdiologistSolverCFG):
 
     lr_sche = 'ExponentialLR'
     lr_sche_args = [0.99]
+    rAI_inf_save_playbacks = True
 
 
 class MyControllerCFG(PMIControllerCFG):
@@ -68,4 +72,3 @@ class MyControllerCFG(PMIControllerCFG):
     inferencer_cls = rAIdiologistInferencer
 
     debug_validation = False
-

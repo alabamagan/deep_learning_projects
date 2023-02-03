@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from pytorch_med_imaging.inferencers.BinaryClassificationInferencer import BinaryClassificationInferencer
 from typing import Union, Iterable, Optional
+from ..config.network.rAIdiologist import *
 
 __all__ = ['rAIdiologistInferencer']
 
@@ -28,13 +29,13 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
             self._logger.info("Running inference for mode 0")
 
         self.net_handles = []
-        # if self.rAI_inf_save_playbacks and not self.net._mode == 0:
-        #     self._logger.info("Registering save playback hooks...")
-        #     self.net.RECORD_ON = True
-        #     self.net_handles.append(self.net.register_forward_pre_hook(_playback_clean_hook))
-        #     self.net_handles.append(self.net.register_forward_hook(self._forward_hook_gen()))
-        # else:
-        #     self.net.RECORD_ON = False
+        if self.rAI_inf_save_playbacks and not self.net._mode == 0:
+            self._logger.info("Registering save playback hooks...")
+            self.net.RECORD_ON = True
+            self.net_handles.append(self.net.register_forward_pre_hook(_playback_clean_hook))
+            self.net_handles.append(self.net.register_forward_hook(self._forward_hook_gen()))
+        else:
+            self.net.RECORD_ON = False
 
     def _reshape_tensors(self,
                          out_list: Iterable[torch.FloatTensor],
@@ -94,6 +95,8 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
             # self.playbacks = torch.cat(self.playbacks, dim=0)
             self._logger.debug(f"playbacks: {self.playbacks}")
             self._logger.info(f"Writing playbacks to: {str(out_path)}")
+            if len(uids) != len(self.playbacks):
+                self._logger.warning("Playback does not match uids")
             out_dict = {u: l.tolist() for u, l in zip(uids, self.playbacks)}
             with out_path.open('w') as jf:
                 json.dump(out_dict, jf, sort_keys=True)
@@ -112,6 +115,6 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
 
 def _playback_clean_hook(module, input):
     r"""This hook cleans the rAIdiologist playback list prior to running a mini-batch"""
-    if isinstance(module, rAIdiologist):
+    if isinstance(module, (rAIdiologist, rAIdiologist_v2, rAIdiologist_v3)):
         module.clean_playback()
     return

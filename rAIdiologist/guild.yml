@@ -20,7 +20,7 @@
         - default
 
     train-ddp:
-      main: main.py --ddp
+      main: main --ddp
       flags:
         controller_cfg.net_name: 'rai_v1'
       flags-dest: config:rAIdiologist/config/flags/flags.yaml
@@ -98,6 +98,8 @@
       - file: '../NPC_Segmentation'
         target-type: 'link'
       - file: './rAIdiologist/config/v1_rAIdiologist_transform.yaml'
+        target-type: 'copy'
+      - file: './rAIdiologist/config/v2_rAIdiologist_transform.yaml'
         target-type: 'copy'
 
     config:

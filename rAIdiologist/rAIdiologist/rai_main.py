@@ -26,7 +26,9 @@ class DDP_helper:
 
         controller = PMIController(cfg)
         controller.override_cfg(flags)
+        # Change the batch-size because each controller only has one GPU
         controller.solver_cfg.batch_size = controller.solver_cfg.batch_size // world_size
+        # Override the network setting
         controller.solver_cfg.net = rai_options['networks'][controller.net_name]
         controller.exec()
 

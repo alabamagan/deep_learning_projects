@@ -4,9 +4,9 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_packed_sequence
 import torchio as tio
 import os
+import copy
 from pathlib import Path
 from typing import Iterable, Union, Optional
-
 from pytorch_med_imaging.networks.layers import PositionalEncoding
 from  pytorch_med_imaging.networks.third_party_nets import *
 from .slicewise_ran import SlicewiseAttentionRAN, RAN_25D
@@ -228,7 +228,6 @@ class rAIdiologist(nn.Module):
             mask[i, bot_slice:top_slice + 1].fill_(True)
         return torch.Masked
 
-
     def forward_swran(self, *args):
         if len(args) > 0: # restrict input to only a single image
             return self.cnn.forward(args[0])
@@ -359,8 +358,8 @@ class LSTM_rater(nn.Module):
 
     This module also offers to record the predicted score, confidence score and which slice they are deduced. The
     playback are stored in the format:
-        [(torch.Tensor([prediction, confidence, slice_index]),  # data 1
-         (torch.Tensor([prediction, confidence, slice_index]),  # data 2
+        [(torch.Tensor([prediction, direction, slice_index]),  # data 1
+         (torch.Tensor([prediction, direction, slice_index]),  # data 2
          ...]
 
     """
@@ -449,10 +448,19 @@ class LSTM_rater(nn.Module):
             self.play_back.append(row)
         return o # no need to deal with up or down afterwards
 
-    def clean_playback(self):
+    def clean_playback(self) -> None:
         self.play_back.clear()
 
-    def get_playback(self):
+    def get_playback(self) -> list:
+        r"""Return the playback list if :attr:`_RECORD_ON` is set to ``True`` during :func:`forward`.
+
+        Each forward() call will add one element to ``self.play_back``, the elements should all be torch tensors
+        that has the structure of (B x C x 1), where B is the mini-batch size. Note that the last elements might have
+        a different B.
+
+        Returns:
+            list
+        """
         return self.play_back
 
 class rAIdiologist_v2(rAIdiologist):
@@ -471,12 +479,20 @@ class rAIdiologist_v2(rAIdiologist):
         self.cnn = RAN_25D(1, out_ch, exclude_fc=True, sigmoid_out=False, reduce_strats='mean', dropout=dropout)
 
 class rAIdiologist_v3(rAIdiologist):
-    r"""This is a new structure which attempts to weight """
+    r"""This is a new structure which attempts to weight the cnn and rnn output."""
     def __init__(self, *args, **kwargs):
         super(rAIdiologist_v3, self).__init__(*args, **kwargs)
         self.cnn.return_top = True
         self.cnn.exclude_top = False
         self.register_parameter('sw_weight', nn.Parameter(torch.Tensor([0.]))) # is weights the output between cnn and lstm decision
+
+    def set_mode(self, mode: int):
+        r"""The slicewise weights should only changes when the mode is not 0."""
+        super(LSTM_rater, self).set_mode(mode)
+        if not mode == 0:
+            self.sw_weight.requires_grad = True
+        else:
+            self.sw_weight.requires_grad = False
 
     def forward_(self, x):
         # input is x: (B x 1 x H x W x S) seg: (B x 1 x H x W x S)
@@ -488,6 +504,9 @@ class rAIdiologist_v3(rAIdiologist):
         x = self.dropout(x)
         while x.dim() < 3:
             x = x.unsqueeze(0)
+        # record x for playback
+        if self.RECORD_ON:
+            x_play_back = copy.deepcopy(x.detach())
         x = x.permute(0, 2, 1).contiguous() # (B x C x S) -> (B x S x C)
 
         # o: (B x S x out_ch)
@@ -509,22 +528,24 @@ class rAIdiologist_v3(rAIdiologist):
             num_ch = o.shape[-1]
 
             for i in nonzero_slices:
-                # output of bidirectional LSTM: (B x S x 2 x C), where for 3rd dim, 0 is forward and 1 is reverse
-                # say input is [0, 1, 2, 3, 4], output is arranged:
-                #   [[0, 1, 2, 3, 4],
-                #    [4, 3, 2, 1, 0]]
-                # So if input is padded say [0, 1, 2, 3, 4, 0, 0], output is arranged:
-                #   [[0, 1, 2, 3, 4, 0, 0],
-                #    [0, 0, 4, 3, 2, 1, 0]]
-                # Therefore, for forward run, gets the element before padding, and for the reverse run, get the
-                # last element.
                 # !Update:
                 # Changed to use packed sequence, such that this now both forward and backward is at `top_slices`.
                 _o_forward  = torch.narrow(o[i, :], 0, top_slices[i], 1) # forward run is padded after top_slices
                 _o.append(_o_forward)
 
             if self.RECORD_ON:
-                self.play_back.extend(self.lstm_rater.get_playback())
+                lpb = self.lstm_rater.get_playback()[0] # (B x S x 3)
+                xpb = self.cnn.out_fc1(self.cnn.out_bn(x_play_back).permute(0, 2, 1)).cpu() # (B x S)
+                if self.lstm_rater._bidirectional:
+                    # for bidirectional, the stack is viewed back and forth
+                    xpb = xpb[:, :lpb.shape[1]//2]
+                    xpb = torch.concat([xpb] * 2, dim=1)
+                else:
+                    xpb = xpb[:, :lpb.shape[1]]
+
+                play_back = torch.cat([xpb, lpb], dim=-1)
+
+                self.play_back.append(play_back)
                 self.lstm_rater.clean_playback()
 
             if len(o) > 1:
