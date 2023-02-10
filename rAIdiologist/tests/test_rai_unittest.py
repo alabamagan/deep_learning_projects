@@ -114,6 +114,12 @@ class TestRAIController(unittest.TestCase):
         cls._logger = MNTSLogger('.', logger_name='unittest', log_level='debug', keep_file=False, verbose=True)
         MNTSLogger.set_log_level('debug')
 
+    def setUp(self) -> None:
+        super(TestRAIController, self).setUp()
+        self.controller.debug_mode = True
+        self.controller.solver_cfg.num_of_epochs = 2
+        self.controller.solver_cfg.batch_size = 2
+
     def __init__(self, *args,**kwargs):
         super().__init__(*args, **kwargs)
         self.controller = PMIController(MyControllerCFG())
