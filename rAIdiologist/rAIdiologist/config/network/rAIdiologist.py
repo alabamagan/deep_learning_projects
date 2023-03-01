@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_packed_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_packed_sequence, pad_sequence
 import torchio as tio
 import os
 import copy
@@ -95,7 +95,7 @@ class rAIdiologist(nn.Module):
             for p in self.parameters():
                 p.requires_grad = True
         elif mode == -1: # inference
-            mode = 4
+            mode = 5
         else:
             raise ValueError(f"Wrong mode input: {mode}, can only be one of [0|1|2|3|4|5].")
 
@@ -133,48 +133,37 @@ class rAIdiologist(nn.Module):
 
         # o: (B x S x out_ch)
         o = self.lstm_rater(self.lstm_prelayernorm(x).permute(0, 2, 1),
-                            torch.as_tensor(top_slices).int() + 1).contiguous()
+                            torch.as_tensor(top_slices).int()).contiguous()
 
-        if self._mode == 1 or self._mode == 2:
-            # (B x S x C) -> (B x C x S) -> (B x C)
-            # !!this following line is suppose to be correct, but there's a bug in torch such that it returns a vector
-            # !!with same value when C = 1
-            # !!o = F.adaptive_max_pool1d(o.permute(0, 2, 1), 1).squeeze(2)
-            chan_size = o.shape[-1]
-            o = F.adaptive_max_pool1d(o.permute(0, 2, 1).squeeze(1), 1).view(-1, chan_size)
-            # o = torch.stack([o[i,j] for i, j in zero_slices.items()], dim=0)
-        elif self._mode == 3 or self._mode == 4 or self._mode == 5:
-            # Loop batch
-            _o = []
-
-            num_ch = o.shape[-1]
-
-            for i in nonzero_slices:
-                # output of bidirectional LSTM: (B x S x 2 x C), where for 3rd dim, 0 is forward and 1 is reverse
-                # say input is [0, 1, 2, 3, 4], output is arranged:
-                #   [[0, 1, 2, 3, 4],
-                #    [4, 3, 2, 1, 0]]
-                # So if input is padded say [0, 1, 2, 3, 4, 0, 0], output is arranged:
-                #   [[0, 1, 2, 3, 4, 0, 0],
-                #    [0, 0, 4, 3, 2, 1, 0]]
-                # Therefore, for forward run, gets the element before padding, and for the reverse run, get the
-                # last element.
-                # !Update:
-                # Changed to use packed sequence, such that this now both forward and backward is at `top_slices`.
-                _o_forward  = torch.narrow(o[i, :], 0, top_slices[i], 1) # forward run is padded after top_slices
-                _o.append(_o_forward)
-
-            if self.RECORD_ON:
-                self.play_back.extend(self.lstm_rater.get_playback())
-                self.lstm_rater.clean_playback()
-
-            if len(o) > 1:
-                o = torch.cat(_o)
-            else:
-                o = _o[0]
-            del _o
-        else:
-            raise AttributeError(f"Got wrong mode: {self._mode}, can only be one of [1|2|3|4|5].")
+        # # Loop batch
+        # _o = []
+        #
+        # num_ch = o.shape[-1]
+        #
+        # for i in nonzero_slices:
+        #     # output of bidirectional LSTM: (B x S x 2 x C), where for 3rd dim, 0 is forward and 1 is reverse
+        #     # say input is [0, 1, 2, 3, 4], output is arranged:
+        #     #   [[0, 1, 2, 3, 4],
+        #     #    [4, 3, 2, 1, 0]]
+        #     # So if input is padded say [0, 1, 2, 3, 4, 0, 0], output is arranged:
+        #     #   [[0, 1, 2, 3, 4, 0, 0],
+        #     #    [0, 0, 4, 3, 2, 1, 0]]
+        #     # Therefore, for forward run, gets the element before padding, and for the reverse run, get the
+        #     # last element.
+        #     # !Update:
+        #     # Changed to use packed sequence, such that this now both forward and backward is at `top_slices`.
+        #     _o_forward  = torch.narrow(o[i, :], 0, top_slices[i], 1) # forward run is padded after top_slices
+        #     _o.append(_o_forward)
+        #
+        if self.RECORD_ON:
+            self.play_back.extend(self.lstm_rater.get_playback())
+            self.lstm_rater.clean_playback()
+        #
+        # if len(o) > 1:
+        #     o = torch.cat(_o)
+        # else:
+        #     o = _o[0]
+        # del _o
         return o
 
     @staticmethod
@@ -419,33 +408,20 @@ class LSTM_rater(nn.Module):
         # LSTM (B x C x S) -> (B x S x C)
         x = x.permute(0, 2, 1)
         x = pack_padded_sequence(x, seq_length, batch_first=True, enforce_sorted=False)
-        # !note that LSTM reorders reverse direction run of `output` already
+        # !note that bidirectional LSTM reorders reverse direction run of `output` (`_o`) already
         _o, (_h, _c) = self.lstm(x)
-        _o = pad_packed_sequence(_o, batch_first=True)[0] # convert back into tensor
+        _o = unpack_sequence(_o) # convert back into tensors, _o = list of B x (S x C)
 
-        play_back = []
-
-        # _o: (B, S, C) -> _o: (B x S x 2 x C)
-        bsize, ssize, _ = _o.shape
-        if self._bidirectional:
-            o = _o.view(bsize, ssize, 2, -1) # separate the outputs from two direction
-        else:
-            o = _o.view(bsize, ssize, -1)
-        o = self.out_fc(self.dropout(o))    # _o: (B x S x 2 x fc)
+        o = self.out_fc(self.dropout(_h[-1])) # _h: (L x B x C), o: (B x C_out)
 
         if self._RECORD_ON:
-            if self._bidirectional:
-                # d = direction, s = slice_index
-                d = torch.cat([torch.zeros(ssize), torch.ones(ssize)]).view(1, -1, 1)
-                slice_index = torch.cat([torch.arange(ssize)] * 2).view(1 ,-1, 1)
-                _o = o.view(bsize, ssize, -1).detach().cpu()
-                _o = torch.cat([_o[..., 0], _o[..., 1]], dim=1).view(bsize, -1, 1)
-            else:
-                d = torch.zeros(ssize).view(1, -1, 1)
-                slice_index = torch.arange(ssize).view(1, -1, 1)
-                _o = o.view(bsize, ssize, -1).detach().cpu()
-            row = torch.cat([_o, d.expand_as(_o), slice_index.expand_as(_o)], dim=-1) # concat chans
-            self.play_back.append(row)
+            # d = direction, s = slice_index
+            s = [torch.arange(oo.shape[0]).view(-1, 1) for oo in _o]
+            d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in _o]
+            sw_pred = [self.out_fc(oo).cpu().view(-1, 1) for oo in _o]
+            self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, s, d))])
+            # row = torch.cat([_o, d.expand_as(_o), slice_index.expand_as(_o)], dim=-1) # concat chans
+            # self.play_back.append(row)
         return o # no need to deal with up or down afterwards
 
     def clean_playback(self) -> None:
@@ -484,15 +460,22 @@ class rAIdiologist_v3(rAIdiologist):
         super(rAIdiologist_v3, self).__init__(*args, **kwargs)
         self.cnn.return_top = True
         self.cnn.exclude_top = False
-        self.register_parameter('sw_weight', nn.Parameter(torch.Tensor([0.]))) # is weights the output between cnn and lstm decision
+        self.output_bn = nn.BatchNorm1d(2)
+        self.final_fc = nn.Linear(2, 1, bias=False)
+        self.final_fc.weight
+        self.register_parameter('sw_weight', nn.Parameter(torch.Tensor([0]))) # is weights the output between cnn and lstm decision
 
     def set_mode(self, mode: int):
         r"""The slicewise weights should only changes when the mode is not 0."""
         super(LSTM_rater, self).set_mode(mode)
         if not mode == 0:
-            self.sw_weight.requires_grad = True
+            for mod in [self.final_fc, self.output_bn]:
+                for p in mod.parameters():
+                    p.requires_grad = True
         else:
-            self.sw_weight.requires_grad = False
+            for mod in [self.final_fc, self.output_bn]:
+                for p in mod.parameters():
+                    p.requires_grad = False
 
     def forward_(self, x):
         # input is x: (B x 1 x H x W x S) seg: (B x 1 x H x W x S)
@@ -511,53 +494,21 @@ class rAIdiologist_v3(rAIdiologist):
 
         # o: (B x S x out_ch)
         o = self.lstm_rater(self.lstm_prelayernorm(x).permute(0, 2, 1),
-                            torch.as_tensor(top_slices).int() + 1).contiguous()
+                            torch.as_tensor(top_slices).int()).contiguous()
 
-        if self._mode == 1 or self._mode == 2:
-            # (B x S x C) -> (B x C x S) -> (B x C)
-            # !!this following line is suppose to be correct, but there's a bug in torch such that it returns a vector
-            # !!with same value when C = 1
-            # !!o = F.adaptive_max_pool1d(o.permute(0, 2, 1), 1).squeeze(2)
-            chan_size = o.shape[-1]
-            o = F.adaptive_max_pool1d(o.permute(0, 2, 1).squeeze(1), 1).view(-1, chan_size)
-            # o = torch.stack([o[i,j] for i, j in zero_slices.items()], dim=0)
-        elif self._mode == 3 or self._mode == 4 or self._mode == 5:
-            # Loop batch
-            _o = []
+        if self.RECORD_ON:
+            lpb = self.lstm_rater.get_playback() # lpb: (list) B x (S x 3)
+            xpb = [xx for xx in self.cnn.out_fc1(self.cnn.out_bn(x_play_back).permute(0, 2, 1)).cpu()] # B x (S x 1)
+            self.play_back.extend([torch.concat([xx[:ll.shape[0]], ll], dim=-1) for xx, ll in zip(xpb, lpb)])
+            self.lstm_rater.clean_playback()
 
-            num_ch = o.shape[-1]
-
-            for i in nonzero_slices:
-                # !Update:
-                # Changed to use packed sequence, such that this now both forward and backward is at `top_slices`.
-                _o_forward  = torch.narrow(o[i, :], 0, top_slices[i], 1) # forward run is padded after top_slices
-                _o.append(_o_forward)
-
-            if self.RECORD_ON:
-                lpb = self.lstm_rater.get_playback()[0] # (B x S x 3)
-                xpb = self.cnn.out_fc1(self.cnn.out_bn(x_play_back).permute(0, 2, 1)).cpu() # (B x S)
-                if self.lstm_rater._bidirectional:
-                    # for bidirectional, the stack is viewed back and forth
-                    xpb = xpb[:, :lpb.shape[1]//2]
-                    xpb = torch.concat([xpb] * 2, dim=1)
-                else:
-                    xpb = xpb[:, :lpb.shape[1]]
-
-                play_back = torch.cat([xpb, lpb], dim=-1)
-
-                self.play_back.append(play_back)
-                self.lstm_rater.clean_playback()
-
-            if len(o) > 1:
-                o = torch.cat(_o)
-            else:
-                o = _o[0]
-            del _o
-        else:
-            raise AttributeError(f"Got wrong mode: {self._mode}, can only be one of [1|2|3|4|5].")
-
-        weight = torch.sigmoid(self.sw_weight)
-        o = o * weight + reduced_x * (1 - weight)
+        if self._mode == 5:
+            t = torch.stack([o, reduced_x], dim=1).view(-1, 2)
+            # weight = torch.sigmoid(self.sw_weight)
+            # o = t[:, 0] * weight + t[:, 1] * (1 - weight)
+            o = (t[:, 0] + t[:, 1]) / 2.
+            o = o.view(-1, 1)
+            # o = self.final_fc(t)
         return o
 
     def forward_swran(self, *args):
@@ -571,4 +522,15 @@ class rAIdiologist_v3(rAIdiologist):
     def set_mode(self, mode):
         r"""For v3, `exclude_fc` of `self.cnn` is always `False`."""
         super(rAIdiologist_v3, self).set_mode(mode)
+        self.cnn.exclude_top = False
+
+
+class rAIdiologist_v4(rAIdiologist_v3):
+    def __init__(self, *args, **kwargs):
+        super(rAIdiologist_v4, self).__init__(*args, **kwargs)
+        out_ch = kwargs.get('out_ch', 2)
+        dropout = kwargs.get('dropout', 0.2)
+        self.cnn = RAN_25D(1, out_ch, exclude_fc=True, sigmoid_out=False, reduce_strats='mean',
+                           dropout=dropout)
+        self.cnn.return_top = True
         self.cnn.exclude_top = False

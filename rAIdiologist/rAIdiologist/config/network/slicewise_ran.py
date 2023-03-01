@@ -59,6 +59,8 @@ class RAN_25D(nn.Module):
         self.exclude_top = exclude_fc # Normally you don't have to use this.
         self.return_top = return_top # Normally you don't have to use this
         self.sigmoid_out = sigmoid_out
+        if return_top and exclude_fc:
+            assert not self.exclude_top, "Cannot return top when exclude_top is True."
 
         # RAN
         self.in_conv2 = ResidualBlock3d(first_conv_ch, 256)

@@ -18,14 +18,14 @@ class Test_visualization_rAIdiologist(unittest.TestCase):
         for i in range(3):
             num_slices = 30
             save_path = cls.tmp_img_path.joinpath(f'IMG{i}.nii.gz')
-            tmp_im = sitk.GetImageFromArray(np.zeros([num_slices, 512, 512]))
+            tmp_im = sitk.GetImageFromArray(np.zeros([512, 512, num_slices]))
             sitk.WriteImage(tmp_im, str(save_path))
 
             vec = np.zeros([num_slices, 4])
-            vec[..., -1] = np.arange(num_slices)
-            vec[..., 2] = 0
-            vec[..., 1] = np.sin(vec[..., -1])
-            vec[..., 0] = np.cos(vec[..., -1])
+            vec[..., -2] = np.arange(num_slices)
+            vec[..., -1] = 0
+            vec[..., 1] = np.sin(vec[..., -2])
+            vec[..., 0] = np.cos(vec[..., -2])
             out_json[f'IMG{i}'] = vec.tolist()
 
         cls.json_file_path = cls.tmp_img_path.joinpath("prediction.json")
@@ -41,11 +41,7 @@ class Test_visualization_rAIdiologist(unittest.TestCase):
         self.img_dir = self.tmp_img_path
         self.json = json.load(Path(self.__class__.json_file_path).open('r'))
         self.image = tio.ScalarImage(str(self.img_dir.joinpath('IMG0.nii.gz')))[tio.DATA].squeeze()
-        self.cnnprediction = np.asarray(self.json['IMG0'])[..., 0].ravel()
-        self.prediction    = np.asarray(self.json['IMG0'])[..., 1].ravel()
-        self.indices       = np.asarray(self.json['IMG0'])[..., -1].ravel()
-        self.direction     = np.asarray(self.json['IMG0'])[..., 2].ravel()
-        self.one_hot       = np.asarray(self.json['IMG0'])[..., -2].ravel()
+        self.cnnprediction, self.prediction, self.indices, self.direction = unpack_json(self.json, 'IMG0')
         self.temp_out_dir  = tempfile.TemporaryDirectory()
 
     def test_mark_slice(self):

@@ -254,7 +254,28 @@ def marked_stack_2_gif(marked_stack: Union[torch.Tensor, np.ndarray],
 
 def unpack_json(json_file: Union[Path, str],
                 id: str):
-    r"""Unpack the json file
+    # check if id exist
+    r"""Unpack the json file for later processing.
+
+    The json file should be of specific format with columns (2nd dim):
+    +--------+-------------------------------------------------------+
+    | Column | Content                                               |
+    +========+=======================================================+
+    | 1      | CNN-prediction/LSTM-prediction                        |
+    +--------+-------------------------------------------------------+
+    | 2      | LSTM-prediction (only when CNN predictions are given) |
+    +--------+-------------------------------------------------------+
+    | -2     | Slice index to plot                                   |
+    +--------+-------------------------------------------------------+
+    | -1     | Direction of LSTM read-out                            |
+    +--------+-------------------------------------------------------+
+
+    For example, the json should hold UID as key and tensor as value, tensor should be in the format of:
+    .. code-block::
+        [[cnn slice #1, lstm slice #1, slice #, direction #1],
+         [cnn slice #2, lstm slice #2, slice #, direction #2],
+         ...
+         ]
 
     Args:
         json_file (Path or str):
@@ -267,14 +288,12 @@ def unpack_json(json_file: Union[Path, str],
             The predictions as float values from CNN branch of rAIdiologist_v3.
         lstm_pred (np.ndarray):
             The predictions as float values.
+        sindex (np.ndarray):
+            The slice index as integers.
         direction (np.ndarray):
             The direction if the read as integer. If 0, the predictions were generate during forward read by LSTM. If 1,
             the predictions were generated during reverse read by LSTM.
-        sindex (np.ndarray):
-            The slice index as integers.
-
     """
-    # check if id exist
     json_dat = json.load(Path(json_file).open('r')) if not isinstance(json_file, dict) else json_file
     if id not in json_dat:
         raise KeyError(f"The specified id {id} does not exist in target json file.")
@@ -283,13 +302,13 @@ def unpack_json(json_file: Union[Path, str],
     if dataarray.shape[-1] == 4:
         cnn_pred  = dataarray[..., 0].ravel()
         lstm_pred = dataarray[..., 1].ravel()
-        direction = dataarray[..., 2].ravel()
-        sindex    = dataarray[..., -1].ravel()
+        direction = dataarray[..., -1].ravel()
+        sindex    = dataarray[..., -2].ravel()
     else:
         cnn_pred = None
         lstm_pred = dataarray[..., 0].ravel()
-        direction = dataarray[..., 1].ravel()
-        sindex    = dataarray[..., -1].ravel()
+        direction = dataarray[..., -1].ravel()
+        sindex    = dataarray[..., -2].ravel()
     return cnn_pred, lstm_pred, sindex, direction
 
 def label_images_in_dir(img_src: Union[Path, str],

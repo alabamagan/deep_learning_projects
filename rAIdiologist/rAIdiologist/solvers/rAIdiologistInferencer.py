@@ -68,6 +68,15 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
                  out_tensor: torch.IntTensor,
                  uids: Iterable[Union[str, int]],
                  gt: Optional[torch.IntTensor] = None):
+        r"""
+        Playbacks should be a list with tensor elements of dimensions (S x 3), e.g., [(S x 3), (S x 3), ...]. The length
+        of the playbacks should match that of the uids.
+
+        Args:
+             out_tensor:
+             uids:
+             gt:
+        """
         dl = super(rAIdiologistInferencer, self)._writter(out_tensor[..., 0].view(-1, 1),
                                                           uids,
                                                           gt,
@@ -89,10 +98,6 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
 
         if self.rAI_inf_save_playbacks:
             out_path = Path(self.output_dir).with_suffix('.json')
-            # playbacks could have different number of slices [(B1 x S1 x 3), (B2 x S2 x 3), ...]
-            # unpack them and join them as lists
-            self.playbacks = [_ for pb in self.playbacks for _ in list(pb)]
-            # self.playbacks = torch.cat(self.playbacks, dim=0)
             self._logger.debug(f"playbacks: {self.playbacks}")
             self._logger.info(f"Writing playbacks to: {str(out_path)}")
             if len(uids) != len(self.playbacks):
