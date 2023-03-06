@@ -30,7 +30,7 @@ class rAIdiologist(nn.Module):
         # LSTM for
         # self.lstm_prefc = nn.Linear(2048, 512)
         self.lstm_prelayernorm = nn.LayerNorm(2048)
-        self.lstm_rater = LSTM_rater(2048, out_ch=out_ch, embed_ch=128, record=record,
+        self.lstm_rater = LSTM_rater(2048, out_ch= out_ch + 1, embed_ch=512, record=record,
                                      iter_limit=iter_limit, dropout=lstm_dropout, bidirectional=False)
 
         # Mode
@@ -133,7 +133,7 @@ class rAIdiologist(nn.Module):
 
         # o: (B x S x out_ch)
         o = self.lstm_rater(self.lstm_prelayernorm(x).permute(0, 2, 1),
-                            torch.as_tensor(top_slices).int()).contiguous()
+                            torch.as_tensor(top_slices).int() + 1).contiguous() # +1 because top_slice is index
 
         # # Loop batch
         # _o = []
@@ -356,6 +356,7 @@ class LSTM_rater(nn.Module):
         super(LSTM_rater, self).__init__()
         # Batch size should be 1
         # self.lstm_reviewer = nn.LSTM(in_ch, embeded, batch_first=True, bias=True)
+        self._out_ch = out_ch
 
         self.dropout = nn.Dropout(p=dropout)
         self.out_fc = nn.Sequential(
@@ -418,7 +419,10 @@ class LSTM_rater(nn.Module):
             # d = direction, s = slice_index
             s = [torch.arange(oo.shape[0]).view(-1, 1) for oo in _o]
             d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in _o]
-            sw_pred = [self.out_fc(oo).cpu().view(-1, 1) for oo in _o]
+            if self._out_ch > 1:
+                sw_pred = [self.out_fc(oo)[..., 0].cpu().view(-1, 1) for oo in _o]
+            else:
+                sw_pred = [self.out_fc(oo).cpu().view(-1, 1) for oo in _o]
             self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, s, d))])
             # row = torch.cat([_o, d.expand_as(_o), slice_index.expand_as(_o)], dim=-1) # concat chans
             # self.play_back.append(row)
@@ -463,7 +467,7 @@ class rAIdiologist_v3(rAIdiologist):
         self.output_bn = nn.BatchNorm1d(2)
         self.final_fc = nn.Linear(2, 1, bias=False)
         self.final_fc.weight
-        self.register_parameter('sw_weight', nn.Parameter(torch.Tensor([0]))) # is weights the output between cnn and lstm decision
+        self.register_parameter('sw_weight', nn.Parameter(torch.Tensor([1.]))) # is weights the output between cnn and lstm decision
 
     def set_mode(self, mode: int):
         r"""The slicewise weights should only changes when the mode is not 0."""
@@ -487,26 +491,30 @@ class rAIdiologist_v3(rAIdiologist):
         x = self.dropout(x)
         while x.dim() < 3:
             x = x.unsqueeze(0)
-        # record x for playback
+
         if self.RECORD_ON:
+            # make a copy of cnn-encoded slices if record on.
             x_play_back = copy.deepcopy(x.detach())
         x = x.permute(0, 2, 1).contiguous() # (B x C x S) -> (B x S x C)
 
-        # o: (B x S x out_ch)
+        # o: (B x S x out_ch + 1), lstm output dense layer will also decide its confidence
         o = self.lstm_rater(self.lstm_prelayernorm(x).permute(0, 2, 1),
                             torch.as_tensor(top_slices).int()).contiguous()
 
         if self.RECORD_ON:
+            # If record on, extract playback from lstm_rater and clean the playback for each mini-batch
             lpb = self.lstm_rater.get_playback() # lpb: (list) B x (S x 3)
+            # because the x_play_back was encoded, use cnn dense output layer to decode the predictions
             xpb = [xx for xx in self.cnn.out_fc1(self.cnn.out_bn(x_play_back).permute(0, 2, 1)).cpu()] # B x (S x 1)
             self.play_back.extend([torch.concat([xx[:ll.shape[0]], ll], dim=-1) for xx, ll in zip(xpb, lpb)])
             self.lstm_rater.clean_playback()
 
-        if self._mode == 5:
-            t = torch.stack([o, reduced_x], dim=1).view(-1, 2)
+        if self._mode >= 3:
+            t = torch.concat([o, reduced_x], dim=1).view(-1, self.lstm_rater._out_ch + 1)
             # weight = torch.sigmoid(self.sw_weight)
             # o = t[:, 0] * weight + t[:, 1] * (1 - weight)
-            o = (t[:, 0] + t[:, 1]) / 2.
+            weights = torch.sigmoid(t[:, 1])
+            o = t[:, 0] * weights + t[:, 2] * (1 - weights)
             o = o.view(-1, 1)
             # o = self.final_fc(t)
         return o
