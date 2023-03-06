@@ -59,6 +59,27 @@
         - run: train controller_cfg.net_name=${net_name} controller_cfg.debug_mode=${debug_mode}
         - run: validation
 
+  sourcecode:
+    root: ./
+    select:
+      - '*.py'
+      - '*.pyx'
+      - '*.txt'
+      - '*.so'
+
+  resources:
+    default:
+      - file: '../NPC_Segmentation'
+        target-type: 'link'
+      - file: './rAIdiologist/config/v1_rAIdiologist_transform.yaml'
+        target-type: 'copy'
+      - file: './rAIdiologist/config/v2_rAIdiologist_transform.yaml'
+        target-type: 'copy'
+
+    config:
+      - file: rAIdiologist/config/flags/flags.yaml
+        target-type: 'copy'
+
 #    recipe_rAIdiologist:
 #      description:
 #        "This recipe requires two config files, one trains the SWRAN and the other train rAIdiologist."
@@ -85,23 +106,3 @@
 #        - validation   config=${config} debug=${debug} batch-size=${bs_cnn} override="(General,fold_code)=${fold_code}"
 #          network=${network}
 
-  sourcecode:
-    root: ./
-    select:
-      - '*.py'
-      - '*.pyx'
-      - '*.txt'
-      - '*.so'
-
-  resources:
-    default:
-      - file: '../NPC_Segmentation'
-        target-type: 'link'
-      - file: './rAIdiologist/config/v1_rAIdiologist_transform.yaml'
-        target-type: 'copy'
-      - file: './rAIdiologist/config/v2_rAIdiologist_transform.yaml'
-        target-type: 'copy'
-
-    config:
-      - file: rAIdiologist/config/flags/flags.yaml
-        target-type: 'copy'

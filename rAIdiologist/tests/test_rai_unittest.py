@@ -105,7 +105,7 @@ class Test3DNetworks(unittest.TestCase):
 class TestRAI_v3(Test3DNetworks):
     def setUp(self) -> None:
         super(TestRAI_v3, self).setUp()
-        self.net = rAIdiologist_v3(1, out_ch=1, record=False).cuda()
+        self.net = rAIdiologist_v3(out_ch=1, record=False).cuda()
 
     @unittest.SkipTest
     def test_RAN_25D(self):

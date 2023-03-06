@@ -11,7 +11,8 @@ rai_options = {
         'rai_v2': rAIdiologist_v2(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2),
         'rai_v2_drop': rAIdiologist_v2(out_ch = 1, dropout = 0.3, lstm_dropout = 0.2),
         'rai_v2_mean': rAIdiologist_v2(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2, reduce_strats='mean'),
-        'rai_v3': rAIdiologist_v3(out_ch = 1, dropout = 0.25, lstm_dropout = 0.2)
+        'rai_v3': rAIdiologist_v3(out_ch = 1, dropout = 0.25, lstm_dropout = 0.2),
+        'rai_v4': rAIdiologist_v4(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2)
     }
 }
 

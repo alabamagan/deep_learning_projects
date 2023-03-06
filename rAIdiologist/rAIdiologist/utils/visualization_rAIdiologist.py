@@ -85,7 +85,7 @@ def make_marked_slice(image: np.ndarray,
             _slice_indices = _slice_indices[::-1]
 
         # mark the slice if the gradient > 0.5 and the prediciton > 1.0, empirically determined
-        if not vert_line is None:
+        if not vert_line is None and not vert_line >= len(_d_pred):
             if _d_pred[vert_line] > 0.5 and _prediction[vert_line] > 1.0:
                 if _direction == 0:
                     RED_BOX_FLAG = True
@@ -99,6 +99,7 @@ def make_marked_slice(image: np.ndarray,
         while np.isclose(_prediction[-i], 0, atol=3E-2):
             i += 1
             print(i)
+
         plot_pair.append((_slice_indices[:-i], _prediction[:-i]))
         plot_pair.append((_slice_indices[:-i], _cnnprediction[:-i]))
 
@@ -111,7 +112,7 @@ def make_marked_slice(image: np.ndarray,
         ax[0].add_patch(plt.Rectangle((0, 0), image.shape[0] -1, image.shape[1] - 1, fill=False, color=box_color, linewidth=2))
 
 
-    # add a horizontal line indicating 0.5
+    # add a horizontal line indicating threshold
     ax_pred_linewidth=0.3
     ax_pred = ax[1]
     ax_pred.set_axis_off()
@@ -131,6 +132,7 @@ def make_marked_slice(image: np.ndarray,
         ax_pred_reverse = ax_pred.twinx()
         ax_pred_reverse.set_axis_off()
         line_cnn = ax_pred_reverse.step(*plot_pair[1], linewidth=ax_pred_linewidth, color='orange', alpha=0.7)[0]
+        align_yaxis(ax_pred, 0, ax_pred_reverse, 0)
 
     # plot backwards LSTM run if it exists
     # if len(plot_pair) > 2: # this means the LSTM is bidirectional
@@ -411,3 +413,18 @@ def add_arrow(line, position=None, direction='right', size=15, color=None):
         size=size
     )
 
+def align_yaxis(ax1, v1, ax2, v2):
+    r"""adjust ax2 ylimit so that v2 in ax2 is aligned to v1 in ax1
+
+    Args:
+        ax1:
+        v1:
+        ax2:
+        v2:
+    """
+    _, y1 = ax1.transData.transform((0, v1))
+    _, y2 = ax2.transData.transform((0, v2))
+    inv = ax2.transData.inverted()
+    _, dy = inv.transform((0, 0)) - inv.transform((0, y1-y2))
+    miny, maxy = ax2.get_ylim()
+    ax2.set_ylim(miny+dy, maxy+dy)

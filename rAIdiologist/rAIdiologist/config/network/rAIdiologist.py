@@ -420,7 +420,9 @@ class LSTM_rater(nn.Module):
             s = [torch.arange(oo.shape[0]).view(-1, 1) for oo in _o]
             d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in _o]
             if self._out_ch > 1:
-                sw_pred = [self.out_fc(oo)[..., 0].cpu().view(-1, 1) for oo in _o]
+                # This is a hack, LSTM_rater should not know how the outer modules uses its output
+                sw_pred = [(self.out_fc(oo)[..., 0] * torch.sigmoid(self.out_fc(oo)[..., 1])).cpu().view(-1, 1)
+                           for oo in _o]
             else:
                 sw_pred = [self.out_fc(oo).cpu().view(-1, 1) for oo in _o]
             self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, s, d))])
@@ -511,12 +513,9 @@ class rAIdiologist_v3(rAIdiologist):
 
         if self._mode >= 3:
             t = torch.concat([o, reduced_x], dim=1).view(-1, self.lstm_rater._out_ch + 1)
-            # weight = torch.sigmoid(self.sw_weight)
-            # o = t[:, 0] * weight + t[:, 1] * (1 - weight)
             weights = torch.sigmoid(t[:, 1])
             o = t[:, 0] * weights + t[:, 2] * (1 - weights)
             o = o.view(-1, 1)
-            # o = self.final_fc(t)
         return o
 
     def forward_swran(self, *args):
