@@ -1,8 +1,10 @@
-from typing import Union
+from typing import Optional, Union
 
 import torch
 from torch import nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence
+
+from pytorch_med_imaging.networks.layers import PositionalEncoding
 
 
 class LSTM_rater(nn.Module):
@@ -118,4 +120,114 @@ class LSTM_rater(nn.Module):
         Returns:
             list
         """
+        return self.play_back
+
+
+class Transformer_rater(nn.Module):
+    r"""This LSTM rater receives inputs as a sequence of deep features extracted from each slice. This module has two
+    operating mode, `stage_1` and `stage_2`. In `stage_1`, the module inspect the whole stack of features and directly
+    return the output. In `stage_2`, the module will first inspect the whole stack, generating a prediction for each
+    slice together with a confidence score. Then, starts at the middle slice, it will scan either upwards or downwards
+    until the confidence score reaches a certain level for a successive number of times.
+
+    This module also offers to record the predicted score, confidence score and which slice they are deduced. The
+    playback are stored in the format:
+        [(torch.Tensor([prediction, confidence, slice_index]),  # data 1
+         (torch.Tensor([prediction, confidence, slice_index]),  # data 2
+         ...]
+
+    """
+    def __init__(self, in_ch, embed_ch=1024, out_ch=2, record=False, iter_limit=5, dropout=0.2):
+        super(Transformer_rater, self).__init__()
+        # Batch size should be 1
+        # self.lstm_reviewer = nn.LSTM(in_ch, embeded, batch_first=True, bias=True)
+
+        trans_encoder_layer = nn.TransformerEncoderLayer(d_model=in_ch, nhead=4, dim_feedforward=embed_ch, dropout=dropout)
+        self.embedding = nn.TransformerEncoder(trans_encoder_layer, num_layers=6)
+        self.pos_encoder = PositionalEncoding(d_model=in_ch)
+
+        self.dropout = nn.Dropout(p=dropout)
+        self.out_fc = nn.Sequential(
+            nn.LayerNorm(embed_ch),
+            nn.ReLU(inplace=True),
+            nn.Linear(embed_ch, out_ch)
+        )
+        self.lstm = nn.LSTM(in_ch, embed_ch, bidirectional=True, num_layers=2, batch_first=True)
+
+        # for playback
+        self.play_back = []
+
+        # other settings
+        self.iter_limit = iter_limit
+        self._RECORD_ON = record
+        self.register_buffer('_mode', torch.IntTensor([1])) # let it save the state too
+        self.register_buffer('_embed_ch', torch.IntTensor([embed_ch]))
+
+        # self.init() # initialization
+        # if os.getenv('CUBLAS_WORKSPACE_CONFIG') not in [":16:8", ":4096:2"]:
+        #     raise AttributeError("You are invoking LSTM without properly setting the environment CUBLAS_WORKSPACE_CONFIG"
+        #                          ", which might result in non-deterministic behavior of LSTM. See "
+        #                          "https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html#torch.nn.LSTM for more.")
+
+    @property
+    def RECORD_ON(self):
+        return self._record_on
+
+    @RECORD_ON.setter
+    def RECORD_ON(self, r):
+        self._RECORD_ON = r
+
+    def forward(self, *args):
+        if self._mode in (1, 2, 3, 4, 5):
+            return self.forward_(*args)
+        else:
+            raise ValueError("There are only stage `1` or `2`, when mode = [1|2], this runs in stage 1, when "
+                             "mode = [3|4], this runs in stage 2.")
+
+    def forward_(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None):
+        r"""
+
+
+        Args:
+            padding_mask:
+                Passed to `self.embedding` attribute `src_key_padding_mask`. The masked portion should be `True`.
+
+        Returns:
+
+        """
+        # assert x.shape[0] == 1, f"This rater can only handle one sample at a time, got input of dimension {x.shape}."
+        # required input size: (B x C x S), padding_mask: (B x S)
+        num_slice = x.shape[-1]
+
+        # embed with transformer encoder
+        # input (B x C x S), but pos_encoding request [S, B, C]
+        # embed = self.embedding(self.pos_encoder(x.permute(2, 0, 1)), src_key_padding_mask=padding_mask)
+        # embeded: (S, B, C) -> (B, S, C)
+        # embed = embed.permute(1, 0, 2)
+
+        # LSTM embed: (B, S, C) -> _o: (B, S, 2 x C) !!LSTM is bidirectional!!
+        # !note that LSTM reorders reverse direction run of `output` already
+        _o, (_h, _c) = self.lstm(x.permute(0, 2, 1))
+
+        play_back = []
+
+        # _o: (B, S, C) -> _o: (B x S x 2 x C)
+        bsize, ssize, _ = _o.shape
+        o = _o.view(bsize, ssize, 2, -1) # separate the outputs from two direction
+        o = self.out_fc(self.dropout(o))    # _o: (B x S x 2 x fc)
+
+        if self._RECORD_ON:
+            # d = direction, s = slice_indexG
+            d = torch.cat([torch.zeros(ssize), torch.ones(ssize)]).view(1, -1, 1)
+            slice_index = torch.cat([torch.arange(ssize)] * 2).view(1 ,-1, 1)
+            _o = o.view(bsize, ssize, -1).detach().cpu()
+            _o = torch.cat([_o[..., 0], _o[..., 1]], dim=1).view(bsize, -1, 1)
+            row = torch.cat([_o, d.expand_as(_o), slice_index.expand_as(_o)], dim=-1) # concat chans
+            self.play_back.append(row)
+        return o # no need to deal with up or down afterwards
+
+    def clean_playback(self):
+        self.play_back.clear()
+
+    def get_playback(self):
         return self.play_back
