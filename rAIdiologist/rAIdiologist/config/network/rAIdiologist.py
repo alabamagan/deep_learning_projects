@@ -1,14 +1,9 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_packed_sequence, pad_sequence
-import torchio as tio
-import os
 import copy
-from pathlib import Path
-from typing import Iterable, Union, Optional
+from typing import Optional
 from pytorch_med_imaging.networks.layers import PositionalEncoding
-from  pytorch_med_imaging.networks.third_party_nets import *
+from .lstm_rater import LSTM_rater
 from .slicewise_ran import SlicewiseAttentionRAN, RAN_25D
 
 class rAIdiologist(nn.Module):
@@ -30,7 +25,7 @@ class rAIdiologist(nn.Module):
         # LSTM for
         # self.lstm_prefc = nn.Linear(2048, 512)
         self.lstm_prelayernorm = nn.LayerNorm(2048)
-        self.lstm_rater = LSTM_rater(2048, out_ch= out_ch + 1, embed_ch=512, record=record,
+        self.lstm_rater = LSTM_rater(2048, out_ch=out_ch + 1, embed_ch=512, record=record,
                                      iter_limit=iter_limit, dropout=lstm_dropout, bidirectional=False)
 
         # Mode
@@ -123,7 +118,7 @@ class rAIdiologist(nn.Module):
         if not seg is None:
             raise DeprecationWarning("Focal mode is no longer available.")
 
-        nonzero_slices, top_slices = self.get_nonzero_slices(x)
+        nonzero_slices, top_slices = RAN_25D.get_nonzero_slices(x)
 
         x = self.cnn(x)     # Shape -> (B x 2048 x S)
         x = self.dropout(x)
@@ -167,38 +162,6 @@ class rAIdiologist(nn.Module):
         return o
 
     @staticmethod
-    def get_nonzero_slices(x: torch.Tensor):
-        r"""This method computes the nonzero slices in the input. Assumes input shape follows the convention of
-        :math:`(B × C × H × W × S)` and that the padding is done only for dimension :math:`S`.
-
-        Args:
-            x (torch.Tensor):
-                Tensor with shape :math:`(B × C × H × W × S)`.
-
-        Returns:
-            dict: ``nonzero_slices`` - Keys are mini-batch index and values are the bottom and top slices pair
-            list: ``top_slices`` - List of top index of non-zero slices.
-        """
-        # compute non-zero slices from seg if it is not None
-        _tmp = x.detach()
-        sum_slice = _tmp.sum(dim=[1, 2, 3])  # (B x S)
-        # Raise error if everything is zero in any of the minibatch
-        if 0 in list(sum_slice.sum(dim=[1])):
-            msg = f"An item in the mini-batch is completely empty or have no segmentation:\n" \
-                  f"{sum_slice.sum(dim=[1])}"
-            raise ArithmeticError(msg)
-        padding_mask = sum_slice != 0  # (B x S)
-        where_non0 = torch.argwhere(padding_mask)
-        nonzero_slices = {i.cpu().item(): (where_non0[where_non0[:, 0] == i][:, 1].min().cpu().item(),
-                                           where_non0[where_non0[:, 0] == i][:, 1].max().cpu().item()) for i in
-                          where_non0[:, 0]}
-        # Calculate the loading bounds
-        added_radius = 0
-        bot_slices = [max(0, nonzero_slices[i][0] - added_radius) for i in range(len(nonzero_slices))]
-        top_slices = [min(x.shape[-1], nonzero_slices[i][1] + added_radius) for i in range(len(nonzero_slices))]
-        return nonzero_slices, top_slices
-
-    @staticmethod
     def generate_mask_tensor(x):
         r"""Generates :class:`torch.MaskedTensor` that masks the zero padded slice.
 
@@ -211,7 +174,7 @@ class rAIdiologist(nn.Module):
             torch.MaskedTensor: Tensor with size :math:`(B × S)`.
 
         """
-        nonzero_slices, _ = self.get_nonzero_slices(x)
+        nonzero_slices, _ = RAN_25D.get_nonzero_slices(x)
         mask = torch.zeros([x.shape[0], x.shape[1]], dtype=torch.BoolType)
         for i, (bot_slice, top_slice) in nonzero_slices.items():
             mask[i, bot_slice:top_slice + 1].fill_(True)
@@ -338,112 +301,6 @@ class Transformer_rater(nn.Module):
     def get_playback(self):
         return self.play_back
 
-class LSTM_rater(nn.Module):
-    r"""This LSTM rater receives inputs as a sequence of deep features extracted from each slice. This module has two
-    operating mode, `stage_1` and `stage_2`. In `stage_1`, the module inspect the whole stack of features and directly
-    return the output. In `stage_2`, the module will first inspect the whole stack, generating a prediction for each
-    slice together with a confidence score. Then, starts at the middle slice, it will scan either upwards or downwards
-    until the confidence score reaches a certain level for a successive number of times.
-
-    This module also offers to record the predicted score, confidence score and which slice they are deduced. The
-    playback are stored in the format:
-        [(torch.Tensor([prediction, direction, slice_index]),  # data 1
-         (torch.Tensor([prediction, direction, slice_index]),  # data 2
-         ...]
-
-    """
-    def __init__(self, in_ch, embed_ch=1024, out_ch=2, record=False, iter_limit=5, dropout=0.2, bidirectional=False):
-        super(LSTM_rater, self).__init__()
-        # Batch size should be 1
-        # self.lstm_reviewer = nn.LSTM(in_ch, embeded, batch_first=True, bias=True)
-        self._out_ch = out_ch
-
-        self.dropout = nn.Dropout(p=dropout)
-        self.out_fc = nn.Sequential(
-            nn.LayerNorm(embed_ch),
-            nn.ReLU(inplace=True),
-            nn.Linear(embed_ch, out_ch)
-        )
-        self.lstm = nn.LSTM(in_ch, embed_ch, bidirectional=bidirectional, num_layers=2, batch_first=True)
-
-        # for playback
-        self.play_back = []
-
-        # other settings
-        self.iter_limit = iter_limit
-        self._RECORD_ON = record
-        self.register_buffer('_mode', torch.IntTensor([1])) # let it save the state too
-        self.register_buffer('_embed_ch', torch.IntTensor([embed_ch]))
-        self.register_buffer('_bidirectional', torch.IntTensor([bidirectional]))
-
-    @property
-    def RECORD_ON(self):
-        return self._RECORD_ON
-
-    @RECORD_ON.setter
-    def RECORD_ON(self, r):
-        self._RECORD_ON = r
-
-    def forward(self, *args):
-        if self._mode in (1, 2, 3, 4, 5):
-            return self.forward_(*args)
-        else:
-            raise ValueError("There are only stage `1` or `2`, when mode = [1|2], this runs in stage 1, when "
-                             "mode = [3|4], this runs in stage 2.")
-
-    def forward_(self, x: torch.Tensor, seq_length: Union[torch.Tensor, list]):
-        r"""
-
-
-        Args:
-            padding_mask:
-                Passed to `self.embedding` attribute `src_key_padding_mask`. The masked portion should be `True`.
-
-        Returns:
-
-        """
-        # assert x.shape[0] == 1, f"This rater can only handle one sample at a time, got input of dimension {x.shape}."
-        # required input size: (B x C x S), padding_mask: (B x S)
-        num_slice = x.shape[-1]
-
-        # LSTM (B x C x S) -> (B x S x C)
-        x = x.permute(0, 2, 1)
-        x = pack_padded_sequence(x, seq_length, batch_first=True, enforce_sorted=False)
-        # !note that bidirectional LSTM reorders reverse direction run of `output` (`_o`) already
-        _o, (_h, _c) = self.lstm(x)
-        _o = unpack_sequence(_o) # convert back into tensors, _o = list of B x (S x C)
-
-        o = self.out_fc(self.dropout(_h[-1])) # _h: (L x B x C), o: (B x C_out)
-
-        if self._RECORD_ON:
-            # d = direction, s = slice_index
-            s = [torch.arange(oo.shape[0]).view(-1, 1) for oo in _o]
-            d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in _o]
-            if self._out_ch > 1:
-                # This is a hack, LSTM_rater should not know how the outer modules uses its output
-                sw_pred = [(self.out_fc(oo)[..., 0] * torch.sigmoid(self.out_fc(oo)[..., 1])).cpu().view(-1, 1)
-                           for oo in _o]
-            else:
-                sw_pred = [self.out_fc(oo).cpu().view(-1, 1) for oo in _o]
-            self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, s, d))])
-            # row = torch.cat([_o, d.expand_as(_o), slice_index.expand_as(_o)], dim=-1) # concat chans
-            # self.play_back.append(row)
-        return o # no need to deal with up or down afterwards
-
-    def clean_playback(self) -> None:
-        self.play_back.clear()
-
-    def get_playback(self) -> list:
-        r"""Return the playback list if :attr:`_RECORD_ON` is set to ``True`` during :func:`forward`.
-
-        Each forward() call will add one element to ``self.play_back``, the elements should all be torch tensors
-        that has the structure of (B x C x 1), where B is the mini-batch size. Note that the last elements might have
-        a different B.
-
-        Returns:
-            list
-        """
-        return self.play_back
 
 class rAIdiologist_v2(rAIdiologist):
     r"""This uses RAN_25D instead of SWRAN."""
@@ -487,7 +344,7 @@ class rAIdiologist_v3(rAIdiologist):
         # input is x: (B x 1 x H x W x S) seg: (B x 1 x H x W x S)
         while x.dim() < 5:
             x = x.unsqueeze(0)
-        nonzero_slices, top_slices = self.get_nonzero_slices(x)
+        nonzero_slices, top_slices = RAN_25D.get_nonzero_slices(x)
 
         reduced_x, x = self.cnn(x)     # Shape -> (B x 2048 x S)
         x = self.dropout(x)
@@ -500,22 +357,27 @@ class rAIdiologist_v3(rAIdiologist):
         x = x.permute(0, 2, 1).contiguous() # (B x C x S) -> (B x S x C)
 
         # o: (B x S x out_ch + 1), lstm output dense layer will also decide its confidence
-        o = self.lstm_rater(self.lstm_prelayernorm(x).permute(0, 2, 1),
-                            torch.as_tensor(top_slices).int()).contiguous()
+        o = self.lstm_rater(self.lstm_prelayernorm(x[:, 1:]).permute(0, 2, 1), # discard the first and last slice
+                            torch.as_tensor(top_slices).int() - 1).contiguous() # -1 discard the last slice
 
         if self.RECORD_ON:
             # If record on, extract playback from lstm_rater and clean the playback for each mini-batch
-            lpb = self.lstm_rater.get_playback() # lpb: (list) B x (S x 3)
+            lpb = self.lstm_rater.get_playback() # lpb: (list) B x (S x 4), channels are: (sw_pred, sigmoid_conf, s, d)
             # because the x_play_back was encoded, use cnn dense output layer to decode the predictions
             xpb = [xx for xx in self.cnn.out_fc1(self.cnn.out_bn(x_play_back).permute(0, 2, 1)).cpu()] # B x (S x 1)
+            for _lpb, _reduced_x in zip(lpb, reduced_x.detach().cpu()):
+                _lpb[:, 1] = _lpb[:, 0] * _lpb[:, 1] + _reduced_x * (1 - _lpb[:, 1])
+            lpb = [_lpb[:, 1:].view(-1, 3) for _lpb in lpb]
             self.play_back.extend([torch.concat([xx[:ll.shape[0]], ll], dim=-1) for xx, ll in zip(xpb, lpb)])
             self.lstm_rater.clean_playback()
 
         if self._mode >= 3:
-            t = torch.concat([o, reduced_x], dim=1).view(-1, self.lstm_rater._out_ch + 1)
-            weights = torch.sigmoid(t[:, 1])
-            o = t[:, 0] * weights + t[:, 2] * (1 - weights)
-            o = o.view(-1, 1)
+            # t = torch.concat([o, reduced_x], dim=1).view(-1, self.lstm_rater._out_ch + 1)
+            # lstm_weights = torch.sigmoid(o[:, 1])
+            # o = (o[:, 0] * lstm_weights + reduced_x.ravel() * (1 - lstm_weights)).view(-1, 1)
+            # o = torch.concat([(o[:, 0] * lstm_weights + reduced_x.ravel()).view(-1, 1), # lstm_weighted decision
+            #                    o[:, 1].view(-1, 1)], dim = 1) # lstm_weight without sigmoid
+            o = o.view(-1, 2)
         return o
 
     def forward_swran(self, *args):
