@@ -6,6 +6,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
+from typing import Union, Any
 from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolverCFG
 from ..config.network.rAIdiologist import rAIdiologist
 import gc
@@ -135,3 +136,30 @@ class rAIdiologistSolver(BinaryClassificationSolver):
             self.get_net().set_mode(-1) # inference when not pretraining (i.e., mode = 0)
         super(rAIdiologistSolver, self).validation()
         self.get_net().set_mode(original_mode)
+
+    def _validation_step_callback(self, g: torch.Tensor, res: torch.Tensor, loss: Union[torch.Tensor, float],
+                                  uids=None) -> None:
+        r"""Uses :attr:`perf` to store the dictionary of various data."""
+        self.validation_losses.append(loss.item())
+        if len(self.perfs) == 0:
+            self.perfs.append({
+                'dics'       : [],
+                'gts'        : [],
+                'predictions': [],
+                'confidence' : [],
+                'uids'       : []
+            })
+        store_dict = self.perfs[0]
+        g, res = self._align_g_res_size(g, res)
+        _df, dic = self._build_validation_df(g, res)
+
+        # Decision were made by checking whether value is > 0.5 after sigmoid
+        store_dict['dics'].extend(dic)
+        store_dict['gts'].extend(g)
+        if res.shape[1] > 1:
+            store_dict['predictions'].extend(res[:, 0].flatten().tolist())
+            store_dict['confidence'].extend(res[:, 1].flatten().tolist())
+        else:
+            store_dict['predictions'].extend(res.flatten().tolist())
+        if isinstance(uids, (tuple, list)):
+            store_dict['uids'].extend(uids)
