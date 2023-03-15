@@ -2,6 +2,7 @@ import os
 import copy
 import torch.distributed as dist
 from .config.network import *
+from .rai_controller import rAIController
 from pytorch_med_imaging.controller import PMIController, PMIControllerCFG
 
 global rai_options
@@ -25,7 +26,7 @@ class DDP_helper:
         os.environ["MASTER_PORT"] = "23455"
         dist.init_process_group("nccl", world_size=world_size, rank=rank)
 
-        controller = PMIController(cfg)
+        controller = rAIController(cfg)
         controller.override_cfg(flags)
         # Change the batch-size because each controller only has one GPU
         controller.solver_cfg.batch_size = controller.solver_cfg.batch_size // world_size
