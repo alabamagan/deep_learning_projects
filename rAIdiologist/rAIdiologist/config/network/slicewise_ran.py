@@ -41,7 +41,7 @@ class RAN_25D(nn.Module):
         'max': 0,
         'min': 1,
         'mean': 2,
-        'avg': 2,
+        'avg': 2
     }
     def __init__(self,
                  in_ch: int,
@@ -179,7 +179,7 @@ class RAN_25D(nn.Module):
         """
         x = self.out_fc1(self.out_bn(x).permute(0, 2, 1))
         # Get best prediction across the slices, note that first conv layer is [3 × 3 × 3] that eats the first and
-        # the last slice, so we are not going to take them into account
+        # the last slice, so we are not going to take them into account. nonzero_slice is index, so no need to -1
         if self.reduce_strats == 0:
             x = torch.stack([x[i, p[0] + 1:p[1]].max(dim=0).values for i, p in nonzero_slice.items()])
         elif self.reduce_strats == 1:
