@@ -18,10 +18,25 @@ rai_options = {
 }
 
 class DDP_helper:
-    r"""Guild helper function. Because guild wraps everything that is in the file main.py, a separate helper class
-    is needed. This helper class allows passing instance templates as class attributes."""
+    r"""A helper class for distributed data parallel (DDP) training using PyTorch. This class provides a function
+    `ddp_helper` that initializes the DDP process group and creates a `rAIController` instance for each process.
+    The `rAIController` instance is used to run the training loop on each process, with instance templates passed
+    as class attributes. The batch size is adjusted for each process to ensure that the total batch size remains
+    the same.
+    """
     @classmethod
-    def ddp_helper(cls, rank, world_size, cfg, flags):
+    def ddp_helper(cls, rank: int, world_size: int, cfg: dict, flags: PMIControllerCFG):
+        r"""
+        Args:
+            rank (int):
+                The rank of the current process.
+            world_size (int):
+                The total number of processes.
+            cfg (dict):
+                A dictionary containing the configuration options for the `rAIController` instance.
+            flags (PMIControllerCFG:
+                An object containing the command-line arguments for the training script.
+        """
         os.environ["MASTER_ADDR"] = "localhost"
         os.environ["MASTER_PORT"] = "23455"
         dist.init_process_group("nccl", world_size=world_size, rank=rank)
