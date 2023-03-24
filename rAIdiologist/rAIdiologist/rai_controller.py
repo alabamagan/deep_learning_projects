@@ -9,9 +9,9 @@ class rAIController(PMIController):
     def override_cfg(self, override_file: PathLike):
         r"""Additional overrides that is specific with rAI configurations"""
         super(rAIController, self).override_cfg(override_file)
-
-        if self.solver_cfg.rAI_fixed_mode >= 3:
-            self.data_loader_cfg.augmentation = './v1_rAIdiologist_transform.yaml'
-            self.data_loader_cfg.sampler = None
-            self.data_loader_cfg.sampler_kwargs = None
+        #
+        # if self.solver_cfg.rAI_fixed_mode >= 0:
+        #     self.data_loader_cfg.augmentation = './v1_rAIdiologist_transform.yaml'
+        #     self.data_loader_cfg.sampler = None
+        #     self.data_loader_cfg.sampler_kwargs = None
 

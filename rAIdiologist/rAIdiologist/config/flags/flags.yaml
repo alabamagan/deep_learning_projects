@@ -7,6 +7,7 @@ solver_cfg:
   rAI_fixed_mode: 0
   lr_sche: 'ExponentialLR'
   lr_sche_args: [0.99]
+  lr_sche_kwargs: {}
 
 controller_cfg:
   debug_mode: False
@@ -14,6 +15,7 @@ controller_cfg:
   inference_on_training_set : False
   validate_on_training_set: False
   fold_code: 'B00'
+  net_name: 'rai_v4'
 
 data_loader_cfg:
   force_augment: False

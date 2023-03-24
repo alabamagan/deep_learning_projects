@@ -4,7 +4,8 @@ import torch
 from torch import nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence
 
-from pytorch_med_imaging.networks.layers import PositionalEncoding
+from pytorch_med_imaging.networks.layers import PositionalEncoding, NormLayers
+
 
 
 class LSTM_rater(nn.Module):
@@ -33,6 +34,7 @@ class LSTM_rater(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(embed_ch, out_ch)
         )
+        self.lstm_norm = NormLayers.PaddedLayerNorm(in_ch)
         self.lstm = nn.LSTM(in_ch, embed_ch, bidirectional=bidirectional, num_layers=2, batch_first=True)
 
         # for playback
@@ -61,13 +63,13 @@ class LSTM_rater(nn.Module):
                              "mode = [3|4], this runs in stage 2.")
 
     def forward_(self, x: torch.Tensor, seq_length: Union[torch.Tensor, list]):
-        r"""
+        r"""Note that layer
 
 
         Args:
             x (torch.Tensor):
                 Input tensor of the encoded slice, assume the input already excluded the first and the bottom slice that
-                were padded after the convolution.
+                were padded after the convolution. Dimension should be (B x S x C).
             seq_length (list):
                 A list of number of slices in each element of the input mini-batch. E.g., if the input is the padded
                 sequence with [10, 15, 13] slices, it would be padded into a a tensor of (3 x 15 x C), the seq length
@@ -81,27 +83,26 @@ class LSTM_rater(nn.Module):
         num_slice = x.shape[-1]
 
         # LSTM (B x C x S) -> (B x S x C)
-        x = x.permute(0, 2, 1)
+        x = self.lstm_norm(x, seq_length=seq_length)
         x = pack_padded_sequence(x, seq_length, batch_first=True, enforce_sorted=False)
         # !note that bidirectional LSTM reorders reverse direction run of `output` (`_o`) already
         _o, (_h, _c) = self.lstm(x)
-        _o = unpack_sequence(_o) # convert back into tensors, _o = list of B x (S x C)
+        unpacked_o = unpack_sequence(_o) # convert back into tensors, _o = list of B x (S x C)
 
         o = self.out_fc(self.dropout(_h[-1])) # _h: (L x B x C), o: (B x C_out)
 
         if self._RECORD_ON:
             # d = direction, s = slice_index
             # Note that RAN_25 eats top and bot slice, so `s` starts with 1
-            s = [torch.arange(oo.shape[0]).view(-1, 1) + 1 for oo in _o]
-            d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in _o]
+            s = [torch.arange(oo.shape[0]).view(-1, 1) + 1 for oo in unpacked_o]
+            d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in unpacked_o]
             if self._out_ch > 1:
                 # This is a hack, LSTM_rater should not know how the outer modules uses its output
-                sigmoid_conf =  [torch.sigmoid(self.out_fc(oo)[..., 1]).cpu().view(-1, 1) for oo in _o]
-                sw_pred = [self.out_fc(oo)[..., 0].cpu().view(-1, 1) for oo in _o]
+                sigmoid_conf =  [torch.sigmoid(self.out_fc(oo)[..., 1]).cpu().view(-1, 1) for oo in unpacked_o]
+                sw_pred = [self.out_fc(oo)[..., 0].cpu().view(-1, 1) for oo in unpacked_o]
                 self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, sigmoid_conf, s, d))])
             else:
-                raise ArithmeticError("Bidirectional not implemented.")
-                sw_pred = [self.out_fc(oo).cpu().view(-1, 1) for oo in _o]
+                sw_pred = [self.out_fc(oo).cpu().view(-1, 1) for oo in unpacked_o]
                 self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, s, d))])
             # row = torch.cat([_o, d.expand_as(_o), slice_index.expand_as(_o)], dim=-1) # concat chans
             # self.play_back.append(row)

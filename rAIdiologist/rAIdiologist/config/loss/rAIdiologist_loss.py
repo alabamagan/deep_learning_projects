@@ -4,12 +4,29 @@ import torch.nn as nn
 __all__ = ['ConfidenceBCELoss']
 
 class ConfidenceBCELoss(nn.Module):
-    def __init__(self, *args, conf_factor=0, **kwargs):
+    r"""
+    .. notes::
+        The loss function is defined as follows:
+
+        .. math::
+            \mathcal{L} = \frac{1}{N}\sum_{i=1}^{N}\Bigg[\mathrm{clip}\Big(-y_i\log\sigma(x_i) -
+            (1-y_i)\log(1-\sigma(x_i)), 0, 10\Big) +
+            \gamma\mathrm{clip}\Big(-t_i\log\sigma(c_i) - (1-t_i)\log(1-\sigma(c_i)), 0, 10\Big)\Bigg],
+
+        where :math:`N` is the batch size, :math:`x_i` and :math:`y_i` are the predicted probability and the ground truth label
+        for the i-th sample, :math:`c_i` is the predicted confidence score for the i-th sample, and :math:`t_i` is the target
+        confidence score for the i-th sample. :math:`\sigma(\cdot)` denotes the sigmoid function, and :math:`\mathrm{clip}(\cdot)`
+            is a function that clips its input values to be within a specified range.
+    """
+    def __init__(self, *args, conf_factor=0.3, **kwargs):
         r"""Assumes input from model have already passed through sigmoid"""
         super(ConfidenceBCELoss, self).__init__()
-        self.base_loss = nn.BCELoss(*args, **kwargs, reduction='none')
+        self.base_loss = nn.BCEWithLogitsLoss(*args, **kwargs, reduction='none')
         self.conf_factor = conf_factor
-        self.conf_loss = nn.BCELoss(reduction='none')
+        # pos_weight punish wrong guess heavily while reward right guess lightly
+        self.conf_loss = nn.BCEWithLogitsLoss(reduction='none',
+                                              pos_weight=torch.FloatTensor([.3]))
+
         self.register_buffer('_epsilon', torch.DoubleTensor([1E-20]))
 
     def forward(self,
@@ -19,12 +36,11 @@ class ConfidenceBCELoss(nn.Module):
         loss_classification = self.base_loss.forward(input[...,0].flatten(), target.flatten())
         loss_classification = torch.clamp(loss_classification, 0, 10).mean()
 
-
         # can the confidence score "predict right/wrong prediction"
         if input.shape[-1] >= 2:
             # If confidence is large and result is correctly predicted, adjust to lower loss, vice versa.
             # predict = torch.sigmoid(input[...,0].view_as(target)) > 0.5
-            predict = input[...,0].view_as(target) > 0.5
+            predict = input[...,0].view_as(target) > 0
             gt = target > 0
             correct_prediction = predict == gt
 
@@ -35,3 +51,12 @@ class ConfidenceBCELoss(nn.Module):
         else:
             return loss_classification
 
+    @property
+    def weight(self):
+        r"""Override to return weights of base_loss"""
+        return self.base_loss.weight
+
+    @weight.setter
+    def weight(self, x):
+        r"""Override to set weights of base_loss"""
+        self.base_loss.weight = x

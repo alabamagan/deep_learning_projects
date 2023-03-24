@@ -13,7 +13,7 @@ rai_options = {
         'rai_v2_drop': rAIdiologist_v2(out_ch = 1, dropout = 0.3, lstm_dropout = 0.2),
         'rai_v2_mean': rAIdiologist_v2(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2, reduce_strats='mean'),
         'rai_v3': rAIdiologist_v3(out_ch = 1, dropout = 0.25, lstm_dropout = 0.2),
-        'rai_v4': rAIdiologist_v4(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2)
+        'rai_v4': rAIdiologist_v4(out_ch = 1, dropout = 0.15, lstm_dropout = 0.15),
     }
 }
 
@@ -34,7 +34,7 @@ class DDP_helper:
                 The total number of processes.
             cfg (dict):
                 A dictionary containing the configuration options for the `rAIController` instance.
-            flags (PMIControllerCFG:
+            flags (PMIControllerCFG):
                 An object containing the command-line arguments for the training script.
         """
         os.environ["MASTER_ADDR"] = "localhost"

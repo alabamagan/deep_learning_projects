@@ -3,8 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Union, Optional
 from  pytorch_med_imaging.networks.layers import ResidualBlock3d, DoubleConv3d, Conv3d
-from  pytorch_med_imaging.networks.AttentionResidual import AttentionModule_Modified
+from pytorch_med_imaging.networks.layers.StandardLayers3D import MaskedSequential3d
+from  pytorch_med_imaging.networks.AttentionResidual import AttentionModule_25d
 from  pytorch_med_imaging.networks.third_party_nets.spacecutter import LogisticCumulativeLink
+import pprint
 
 
 __all__ = ['SlicewiseAttentionRAN', 'AttentionRAN_25D', 'OrdinalSlicewiseAttentionRAN', 'AttentionRAN_25D_MSE', 'RAN_25D']
@@ -51,11 +53,11 @@ class RAN_25D(nn.Module):
                  sigmoid_out: Optional[bool] = False,
                  reduce_strats: Optional[str] = 'max',
                  dropout: Optional[float] = 0.1,
-                 return_top: Optional[bool] = False):
-
+                 return_top: Optional[bool] = False) -> None:
         super(RAN_25D, self).__init__()
 
-        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 3], stride=[1, 1, 1], padding=[1, 1, 1])
+        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[7, 7, 3], stride=[2, 2, 1], padding=[3, 3, 1],
+                               mask=True)
         self.exclude_top = exclude_fc # Normally you don't have to use this.
         self.return_top = return_top # Normally you don't have to use this
         self.sigmoid_out = sigmoid_out
@@ -63,13 +65,14 @@ class RAN_25D(nn.Module):
             assert not self.exclude_top, "Cannot return top when exclude_top is True."
 
         # RAN
-        self.in_conv2 = ResidualBlock3d(first_conv_ch, 256)
-        self.att1 = AttentionModule_Modified(256, 256)
-        self.r1 = ResidualBlock3d(256, 512, p=dropout)
-        self.att2 = AttentionModule_Modified(512, 512)
-        self.r2 = ResidualBlock3d(512, 1024, p=dropout)
-        self.att3 = AttentionModule_Modified(1024, 1024)
-        self.out_conv1 = ResidualBlock3d(1024, 2048, p=dropout)
+        self.in_conv2  = ResidualBlock3d(first_conv_ch, 256 ,                  mask=True)
+        self.att1      = AttentionModule_25d(256      , 256 , stage = 0      , mask=True)
+        self.r1        = ResidualBlock3d(256          , 512 , p     = dropout, mask=True)
+        self.att2      = AttentionModule_25d(512      , 512 , stage = 1      , mask=True)
+        self.r2        = ResidualBlock3d(512          , 1024, p     = dropout, mask=True)
+        self.att3      = AttentionModule_25d(1024     , 1024, stage = 2      , mask=True)
+        self.out_conv1 = ResidualBlock3d(1024         , 2048, p     = dropout, mask=True)
+        self.out_conv2 = MaskedSequential3d(*([ResidualBlock3d(2048, 2048, p = dropout)] * 2))
 
         # Output layer
         self.out_bn = nn.Sequential(
@@ -81,7 +84,8 @@ class RAN_25D(nn.Module):
         # Reduce strategy
         if reduce_strats not in self._strats_dict:
             raise AttributeError("Reduce strategy is incorrect.")
-        self.register_buffer('reduce_strats', torch.Tensor([self._strats_dict[reduce_strats]]))
+        # self.register_buffer('reduce_strats', torch.Tensor([self._strats_dict[reduce_strats]]))
+        self.reduce_strats = self._strats_dict[reduce_strats]
 
     @staticmethod
     def get_nonzero_slices(x: torch.Tensor):
@@ -128,22 +132,22 @@ class RAN_25D(nn.Module):
         while x.dim() < 5:
             x = x.unsqueeze(0)
         nonzero_slice, _ = self.get_nonzero_slices(x)
+        seq_len = [nonzero_slice[n][1] for n in range(len(nonzero_slice))]
 
 
-        x = self.in_conv1(x)
+        x = self.in_conv1(x, seq_length=seq_len)
 
         x = F.max_pool3d(x, [2, 2, 1], stride=[2, 2, 1])
 
         # Resume dimension
-        x = self.in_conv2(x)
-
-        x = self.att1(x)
-        x = self.r1(x)
-        x = self.att2(x)
-        x = self.r2(x)
-        x = self.att3(x)
-
-        x = self.out_conv1(x)
+        x = self.in_conv2(x , seq_length=seq_len)
+        x = self.att1(x     , seq_length=seq_len)
+        x = self.r1(x       , seq_length=seq_len)
+        x = self.att2(x     , seq_length=seq_len)
+        x = self.r2(x       , seq_length=seq_len)
+        x = self.att3(x     , seq_length=seq_len)
+        x = self.out_conv1(x, seq_length=seq_len)
+        x = self.out_conv2(x, seq_length=seq_len)
 
         # order of slicewise attention and max pool makes no differences because pooling is within slice
         x = F.adaptive_max_pool3d(x, [1, 1, None]).squeeze() # x: (B x C x S)
@@ -177,15 +181,21 @@ class RAN_25D(nn.Module):
             torch.Tensor
 
         """
-        x = self.out_fc1(self.out_bn(x).permute(0, 2, 1))
+        # expect input x: (B x C x S)
+        x = self.out_bn(x).permute(0, 2, 1).contiguous() # x: (B x S x C)
+
+        if self.reduce_strats == 0:
+            x = torch.concat([x[i, a + 1:b].max(dim=0, keepdim=True).values for i, (a, b) in nonzero_slice.items()])
+        elif self.reduce_strats == 1:
+            x = torch.concat([x[i, a + 1:b].min(dim=0, keepdim=True).values for i, (a, b) in nonzero_slice.items()])
+        elif self.reduce_strats == 2:
+            x = torch.concat([x[i, a + 1:b].mean(dim=0, keepdim=True) for i, (a, b) in nonzero_slice.items()])
+        elif self.reduce_strates == 3:
+            pass
+
+        x = self.out_fc1(x)
         # Get best prediction across the slices, note that first conv layer is [3 × 3 × 3] that eats the first and
         # the last slice, so we are not going to take them into account. nonzero_slice is index, so no need to -1
-        if self.reduce_strats == 0:
-            x = torch.stack([x[i, p[0] + 1:p[1]].max(dim=0).values for i, p in nonzero_slice.items()])
-        elif self.reduce_strats == 1:
-            x = torch.stack([x[i, p[0] + 1:p[1]].min(dim=0).values for i, p in nonzero_slice.items()])
-        elif self.reduce_strats == 2:
-            x = torch.stack([x[i, p[0] + 1:p[1]].mean(dim=0) for i, p in nonzero_slice.items()])
         if x.dim() < 2:
             x.view(B, -1)
         return x
@@ -350,11 +360,11 @@ class AttentionRAN_25D(nn.Module):
 
         # RAN
         self.in_conv2 = ResidualBlock3d(first_conv_ch, 256)
-        self.att1 = AttentionModule_Modified(256, 256, save_mask=save_mask)
+        self.att1 = AttentionModule_25d(256, 256, save_mask=save_mask)
         self.r1 = ResidualBlock3d(256, 512, p=0.2)
-        self.att2 = AttentionModule_Modified(512, 512, save_mask=save_mask)
+        self.att2 = AttentionModule_25d(512, 512, save_mask=save_mask)
         self.r2 = ResidualBlock3d(512, 1024, p=0.2)
-        self.att3 = AttentionModule_Modified(1024, 1024, save_mask=save_mask)
+        self.att3 = AttentionModule_25d(1024, 1024, save_mask=save_mask)
         self.out_conv1 = ResidualBlock3d(1024, 2048, p=0.2)
         self.sigmoid_out = sigmoid_out
 

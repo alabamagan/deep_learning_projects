@@ -1,8 +1,11 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import copy
 from .lstm_rater import LSTM_rater
 from .slicewise_ran import SlicewiseAttentionRAN, RAN_25D
+from mnts.mnts_logger import MNTSLogger
+import types
 
 class rAIdiologist(nn.Module):
     r"""
@@ -22,7 +25,6 @@ class rAIdiologist(nn.Module):
 
         # LSTM for
         # self.lstm_prefc = nn.Linear(2048, 512)
-        self.lstm_prelayernorm = nn.LayerNorm(2048)
         self.lstm_rater = LSTM_rater(2048, out_ch=out_ch + 1, embed_ch=512, record=record,
                                      iter_limit=iter_limit, dropout=lstm_dropout, bidirectional=False)
 
@@ -71,8 +73,6 @@ class rAIdiologist(nn.Module):
                 p.requires_grad = False
             for p in self.lstm_rater.parameters():
                 p.requires_grad = True
-            for p in self.lstm_prelayernorm.parameters():
-                p.requires_grad = True
         elif mode in (2, 4):
             # fix RNN train SRAN
             for p in self.cnn.parameters():
@@ -80,8 +80,6 @@ class rAIdiologist(nn.Module):
             for p in self.lstm_rater.parameters():
                 p.requires_grad = False
             for p in self.lstm_rater.out_fc.parameters():
-                p.requires_grad = True
-            for p in self.lstm_prelayernorm.parameters():
                 p.requires_grad = True
         elif mode == 5:
             # Everything is on
@@ -125,7 +123,7 @@ class rAIdiologist(nn.Module):
         x = x.permute(0, 2, 1).contiguous() # (B x C x S) -> (B x S x C)
 
         # o: (B x S x out_ch)
-        o = self.lstm_rater(self.lstm_prelayernorm(x).permute(0, 2, 1),
+        o = self.lstm_rater(x,
                             torch.as_tensor(top_slices).int() + 1).contiguous() # +1 because top_slice is index
 
         # # Loop batch
@@ -246,7 +244,7 @@ class rAIdiologist_v3(rAIdiologist):
         x = x.permute(0, 2, 1).contiguous() # (B x C x S) -> (B x S x C)
 
         # o: (B x S x out_ch + 1), lstm output dense layer will also decide its confidence
-        o = self.lstm_rater(self.lstm_prelayernorm(x[:, 1:]).permute(0, 2, 1), # discard the first and last slice
+        o = self.lstm_rater(x[:, 1:], # discard the first and last slice
                             torch.as_tensor(top_slices).int() - 1).contiguous() # -1 discard the last slice
 
         if self.RECORD_ON:
@@ -261,12 +259,12 @@ class rAIdiologist_v3(rAIdiologist):
             self.lstm_rater.clean_playback()
 
         if self._mode >= 3:
-            # t = torch.concat([o, reduced_x], dim=1).view(-1, self.lstm_rater._out_ch + 1)
-            # lstm_weights = torch.sigmoid(o[:, 1])
-            # o = (o[:, 0] * lstm_weights + reduced_x.ravel() * (1 - lstm_weights)).view(-1, 1)
-            # o = torch.concat([(o[:, 0] * lstm_weights + reduced_x.ravel()).view(-1, 1), # lstm_weighted decision
-            #                    o[:, 1].view(-1, 1)], dim = 1) # lstm_weight without sigmoid
-            o = o.view(-1, 2)
+            t = torch.concat([o, reduced_x], dim=1).view(-1, self.lstm_rater._out_ch + 1)
+            weights = torch.sigmoid(t[:, 1])
+            print(f"weights: {weights}")
+            o = t[:, 0] * weights + t[:, 2] * 0.5
+            # o = o[:, 0]
+            o = o.view(-1, 1)
         return o
 
     def forward_swran(self, *args):
@@ -292,3 +290,4 @@ class rAIdiologist_v4(rAIdiologist_v3):
                            dropout=dropout)
         self.cnn.return_top = True
         self.cnn.exclude_top = False
+
