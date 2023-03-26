@@ -73,22 +73,22 @@ class MySolverCFG(rAIdiologistSolverCFG):
     early_stop_kwargs = {'warmup': 80, 'patience': 15}
     accumulate_grad = 4
 
-    # lr_sche = 'ExponentialLR'
-    # lr_sche_args = [0.99]
-    lr_sche = 'OneCycleLR'
-    lr_sche_args = "[]"
-    lr_sche_kwargs = "{'max_lr':1E-3,'total_steps':50,'cycle_momentum':True}"
+    lr_sche = 'ExponentialLR'
+    lr_sche_args = [0.99]
+    # lr_sche = 'OneCycleLR'
+    # lr_sche_args = "[]"
+    # lr_sche_kwargs = "{'max_lr':1E-3,'total_steps':50,'cycle_momentum':True}"
     rAI_inf_save_playbacks = True
 
-    # loss_function = ConfidenceBCELoss(weight = torch.as_tensor(class_weights))
+    loss_function = ConfidenceBCELoss(weight = torch.as_tensor(class_weights))
 
 
 class MyControllerCFG(PMIControllerCFG):
     run_mode     = 'training'
     fold_code     = 'B00'
-    id_list       = "./NPC_Segmentation/99.Testing/NPC_Screening/v1/{fold_code}.ini"
-    id_list_val   = "./NPC_Segmentation/99.Testing/NPC_Screening/v1/Validation.txt"
-    output_dir    = './NPC_Segmentation/98.Output/NPC_Screening/{fold_code}'
+    id_list       = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold/{fold_code}.ini"
+    id_list_val   = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold/Validation.txt"
+    output_dir    = './NPC_Segmentation/98.Output/NPC_Screening_old/{fold_code}'
     cp_load_dir   = './Backup/rAIdiologist_{fold_code}.pt'
     cp_save_dir   = './Backup/rAIdiologist_{fold_code}.pt'
     log_dir       = f"./Backup/Log/rAIdiologist_{datetime.strftime(datetime.now(), '%Y-%m-%d')}.log"

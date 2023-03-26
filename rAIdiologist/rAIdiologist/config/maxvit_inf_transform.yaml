@@ -1,0 +1,8 @@
+ToCanonical:
+  {}
+Resample:
+  - 'input'
+CropOrPad:
+  - [320, 320, 20]
+  - padding_mode: 0
+  - mask_name: 'prob_map'
