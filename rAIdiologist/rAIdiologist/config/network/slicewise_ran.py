@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from typing import Union, Optional
 from  pytorch_med_imaging.networks.layers import ResidualBlock3d, DoubleConv3d, Conv3d
 from pytorch_med_imaging.networks.layers.StandardLayers3D import MaskedSequential3d
-from  pytorch_med_imaging.networks.AttentionResidual import AttentionModule_25d
+from  pytorch_med_imaging.networks.AttentionResidual import AttentionModule_25d, AttentionModule_25d_recur
 from  pytorch_med_imaging.networks.third_party_nets.spacecutter import LogisticCumulativeLink
 import pprint
 
@@ -56,8 +56,7 @@ class RAN_25D(nn.Module):
                  return_top: Optional[bool] = False) -> None:
         super(RAN_25D, self).__init__()
 
-        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[7, 7, 3], stride=[2, 2, 1], padding=[3, 3, 1],
-                               mask=True)
+        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[7, 7, 3], stride=[2, 2, 1], padding=[3, 3, 1])
         self.exclude_top = exclude_fc # Normally you don't have to use this.
         self.return_top = return_top # Normally you don't have to use this
         self.sigmoid_out = sigmoid_out
@@ -65,14 +64,14 @@ class RAN_25D(nn.Module):
             assert not self.exclude_top, "Cannot return top when exclude_top is True."
 
         # RAN
-        self.in_conv2  = ResidualBlock3d(first_conv_ch, 256 ,                  mask=True)
-        self.att1      = AttentionModule_25d(256      , 256 , stage = 0      , mask=True)
-        self.r1        = ResidualBlock3d(256          , 512 , p     = dropout, mask=True)
-        self.att2      = AttentionModule_25d(512      , 512 , stage = 1      , mask=True)
-        self.r2        = ResidualBlock3d(512          , 1024, p     = dropout, mask=True)
-        self.att3      = AttentionModule_25d(1024     , 1024, stage = 2      , mask=True)
-        self.out_conv1 = ResidualBlock3d(1024         , 2048, p     = dropout, mask=True)
-        self.out_conv2 = MaskedSequential3d(*([ResidualBlock3d(2048, 2048, p = dropout)] * 2))
+        self.in_conv2  = ResidualBlock3d(first_conv_ch, 256 ,                )
+        self.att1      = AttentionModule_25d(256      , 256 , stage = 0      )
+        self.r1        = ResidualBlock3d(256          , 512 , p     = dropout)
+        self.att2      = AttentionModule_25d(512      , 512 , stage = 1      )
+        self.r2        = ResidualBlock3d(512          , 1024, p     = dropout)
+        self.att3      = AttentionModule_25d(1024     , 1024, stage = 2      )
+        self.out_conv1 = ResidualBlock3d(1024         , 2048, p     = dropout)
+        self.out_conv2 = nn.Sequential(*([ResidualBlock3d(2048, 2048, p = dropout)] * 2))
 
         # Output layer
         self.out_bn = nn.Sequential(
@@ -135,19 +134,19 @@ class RAN_25D(nn.Module):
         seq_len = [nonzero_slice[n][1] for n in range(len(nonzero_slice))]
 
 
-        x = self.in_conv1(x, seq_length=seq_len)
+        x = self.in_conv1(x)
 
         x = F.max_pool3d(x, [2, 2, 1], stride=[2, 2, 1])
 
         # Resume dimension
-        x = self.in_conv2(x , seq_length=seq_len)
-        x = self.att1(x     , seq_length=seq_len)
-        x = self.r1(x       , seq_length=seq_len)
-        x = self.att2(x     , seq_length=seq_len)
-        x = self.r2(x       , seq_length=seq_len)
-        x = self.att3(x     , seq_length=seq_len)
-        x = self.out_conv1(x, seq_length=seq_len)
-        x = self.out_conv2(x, seq_length=seq_len)
+        x = self.in_conv2(x)
+        x = self.att1(x)
+        x = self.r1(x)
+        x = self.att2(x)
+        x = self.r2(x)
+        x = self.att3(x)
+        x = self.out_conv1(x)
+        x = self.out_conv2(x)
 
         # order of slicewise attention and max pool makes no differences because pooling is within slice
         x = F.adaptive_max_pool3d(x, [1, 1, None]).squeeze() # x: (B x C x S)
@@ -182,6 +181,7 @@ class RAN_25D(nn.Module):
 
         """
         # expect input x: (B x C x S)
+        seq_len = [nonzero_slice[n][1] for n in range(len(nonzero_slice))]
         x = self.out_bn(x).permute(0, 2, 1).contiguous() # x: (B x S x C)
 
         if self.reduce_strats == 0:
@@ -250,7 +250,7 @@ class SlicewiseAttentionRAN(RAN_25D):
                                                     return_top=return_top)
 
         self.save_weight=save_weight
-        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 3], stride=[1, 1, 1], padding=[1, 1, 1])
+        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 1], stride=[1, 1, 1], padding=[1, 1, 0])
         self.exclude_top = exclude_fc # Normally you don't have to use this.
         self.sigmoid_out = sigmoid_out
 
@@ -265,6 +265,9 @@ class SlicewiseAttentionRAN(RAN_25D):
             nn.AdaptiveAvgPool3d([1, 1, None])
         )
         self.x_w = None
+        self.att1      = AttentionModule_25d_recur(256, 256)
+        self.att2      = AttentionModule_25d_recur(512, 512)
+        self.att3      = AttentionModule_25d_recur(1024, 1024)
 
     def forward(self, x):
         r"""Expect input (B x in_ch x H x W x S), output (B x out_ch)"""
@@ -283,7 +286,7 @@ class SlicewiseAttentionRAN(RAN_25D):
 
         # Permute the axial dimension to the last
         x = F.max_pool3d(x, [2, 2, 1], stride=[2, 2, 1])
-        x = x * x_w.view([x.shape[0], 1, 1, 1, -1]).expand_as(x)
+        x = x * x_w.view([B, 1, 1, 1, -1]).expand_as(x)
 
         # Resume dimension
         x = self.in_conv2(x)

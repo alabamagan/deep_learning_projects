@@ -14,6 +14,8 @@ rai_options = {
         'rai_v2_mean': rAIdiologist_v2(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2, reduce_strats='mean'),
         'rai_v3': rAIdiologist_v3(out_ch = 1, dropout = 0.25, lstm_dropout = 0.2),
         'rai_v4': rAIdiologist_v4(out_ch = 1, dropout = 0.15, lstm_dropout = 0.15),
+        'rai_v4_mean': rAIdiologist_v4mean(out_ch = 1, dropout = 0.2, lstm_dropout = 0.15),
+        'maxvit': MaxViT(1, 1, 64, (2, 2, 5, 2), window_size=5)
     }
 }
 

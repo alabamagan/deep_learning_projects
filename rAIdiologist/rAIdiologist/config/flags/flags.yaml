@@ -16,6 +16,8 @@ controller_cfg:
   validate_on_training_set: False
   fold_code: 'B00'
   net_name: 'rai_v4'
+  matmul_precision: 'high'
+  compile_net: False
 
 data_loader_cfg:
   force_augment: False

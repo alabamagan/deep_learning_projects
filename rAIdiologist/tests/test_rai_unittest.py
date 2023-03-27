@@ -75,6 +75,7 @@ class Test3DNetworks(unittest.TestCase):
         net = self.net
         net.RECORD_ON = True
         net.set_mode(5)
+        net = net.eval()
         with torch.no_grad():
             try:
                 out = net(self.sample_input)
@@ -120,6 +121,11 @@ class TestRAI_v4(TestRAI_v3):
         super(TestRAI_v3, self).setUp()
         self.net = rAIdiologist_v4(out_ch=1, record=False).cuda()
 
+class TestRAI_v4_inversetop(TestRAI_v3):
+    def setUp(self) -> None:
+        super(TestRAI_v3, self).setUp()
+        self.net = rAIdiologist_v4_inversetop(out_ch=1, record=False).cuda()
+
 
 class TestRAIController(unittest.TestCase):
     @classmethod
@@ -131,7 +137,7 @@ class TestRAIController(unittest.TestCase):
         super(TestRAIController, self).setUp()
         self.controller.debug_mode = True
         self.controller.solver_cfg.num_of_epochs = 2
-        self.controller.solver_cfg.batch_size = 2
+        self.controller.solver_cfg.batch_size = 1
 
     def __init__(self, *args,**kwargs):
         super().__init__(*args, **kwargs)
@@ -147,3 +153,9 @@ class TestRAIController(unittest.TestCase):
     def test_s3_inference(self):
         self.controller.run_mode = False
         self.controller.exec()
+
+    def test_s4_validation(self):
+        with torch.no_grad():
+            self.controller.debug_validation = True
+            self.controller.solver_cfg._last_epoch_loss = 1E32
+            self.controller.exec()

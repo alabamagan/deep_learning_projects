@@ -20,7 +20,7 @@ class rAIdiologist(nn.Module):
         # Create inception for 2D prediction
         #!   Note that sigmoid_out should be ``False`` when the loss is already `WithLogits`.
         self.cnn = SlicewiseAttentionRAN(1, out_ch, exclude_fc=True, sigmoid_out=False, dropout=dropout,
-                                         reduce_strats='mean')
+                                         reduce_strats='max')
         self.dropout = nn.Dropout(p=dropout)
 
         # LSTM for
@@ -259,12 +259,13 @@ class rAIdiologist_v3(rAIdiologist):
             self.lstm_rater.clean_playback()
 
         if self._mode >= 3:
-            t = torch.concat([o, reduced_x], dim=1).view(-1, self.lstm_rater._out_ch + 1)
-            weights = torch.sigmoid(t[:, 1])
-            print(f"weights: {weights}")
-            o = t[:, 0] * weights + t[:, 2] * 0.5
-            # o = o[:, 0]
-            o = o.view(-1, 1)
+            # t = torch.concat([o, reduced_x], dim=1).view(-1, self.lstm_rater._out_ch + 1)
+            weights = torch.sigmoid(o[:, 1])
+            o[:, 0] = o[:, 0].flatten() * (1 - weights) + reduced_x.flatten() * 0.5
+            o = torch.concat([torch.narrow(o, 1, 0, 1),
+                              reduced_x.view(-1, 1),
+                              torch.narrow(o, 1, 1, 1)], dim=1)
+            o = o.view(-1, 3)
         return o
 
     def forward_swran(self, *args):
@@ -286,8 +287,17 @@ class rAIdiologist_v4(rAIdiologist_v3):
         super(rAIdiologist_v4, self).__init__(*args, **kwargs)
         out_ch = kwargs.get('out_ch', 2)
         dropout = kwargs.get('dropout', 0.2)
-        self.cnn = RAN_25D(1, out_ch, exclude_fc=True, sigmoid_out=False, reduce_strats='mean',
+        self.cnn = RAN_25D(1, out_ch, exclude_fc=True, sigmoid_out=False, reduce_strats='max',
                            dropout=dropout)
         self.cnn.return_top = True
         self.cnn.exclude_top = False
 
+class rAIdiologist_v4mean(rAIdiologist_v3):
+    def __init__(self, *args, **kwargs):
+        super(rAIdiologist_v4mean, self).__init__(*args, **kwargs)
+        out_ch = kwargs.get('out_ch', 2)
+        dropout = kwargs.get('dropout', 0.2)
+        self.cnn = RAN_25D(1, out_ch, exclude_fc=True, sigmoid_out=False, reduce_strats='mean',
+                           dropout=dropout)
+        self.cnn.return_top = True
+        self.cnn.exclude_top = False

@@ -71,7 +71,7 @@ class MySolverCFG(rAIdiologistSolverCFG):
     plot_to_tb = True
     early_stop = 'loss_reference'
     early_stop_kwargs = {'warmup': 80, 'patience': 15}
-    accumulate_grad = 4
+    accumulate_grad = 0
 
     lr_sche = 'ExponentialLR'
     lr_sche_args = [0.99]

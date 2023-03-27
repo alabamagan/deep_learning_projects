@@ -2,6 +2,7 @@ from pytorch_med_imaging.controller import PMIController
 from rAIdiologist.config.rAIdiologistCFG import *
 from rAIdiologist.config.network import *
 from rAIdiologist.rai_main import *
+from rAIdiologist.rai_controller import rAIController
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -24,7 +25,7 @@ def main(inference, ddp):
 
     # If DDP mode is not on, simply execute one process
     if not ddp:
-        controller = PMIController(cfg)
+        controller = rAIController(cfg)
         controller.override_cfg('flags.yaml')
 
         # override network by guild flags

@@ -33,19 +33,21 @@ class ConfidenceBCELoss(nn.Module):
                 input: torch.DoubleTensor,
                 target: torch.DoubleTensor):
         # Typical classification loss for first dimension
-        loss_classification = self.base_loss.forward(input[...,0].flatten(), target.flatten())
-        loss_classification = torch.clamp(loss_classification, 0, 10).mean()
+        loss_classification = self.base_loss.forward(input[...,0].flatten(), target.flatten()).mean()
+        # loss_classification = torch.clamp(loss_classification, 0, 10).mean()
 
         # can the confidence score "predict right/wrong prediction"
         if input.shape[-1] >= 2:
             # If confidence is large and result is correctly predicted, adjust to lower loss, vice versa.
             # predict = torch.sigmoid(input[...,0].view_as(target)) > 0.5
-            predict = input[...,0].view_as(target) > 0
+            predict = input[...,1].view_as(target) > 0 # the CNN prediction should be the second element
             gt = target > 0
             correct_prediction = predict == gt
 
-            loss_conf = self.conf_loss(input[..., 1].flatten(), correct_prediction.float().flatten())
-            loss_conf = torch.clamp(loss_conf, 0, 10).mean()
+            # The third component would be the confidence, this configuration encourages the LSTM to correct the
+            # the prediction of the CNN based on the features it extracted.
+            loss_conf = self.conf_loss(input[..., 2].flatten(), correct_prediction.float().flatten()).mean()
+            # loss_conf = torch.clamp(loss_conf, 0, 10).mean()
 
             return (loss_classification + loss_conf * self.conf_factor) / (1 + self.conf_factor)
         else:

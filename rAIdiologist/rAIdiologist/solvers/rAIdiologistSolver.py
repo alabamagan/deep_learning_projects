@@ -82,15 +82,21 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         _df = pd.DataFrame(data=_data, columns=['res_%i'%i for i in range(chan)] + ['g'])
         _df['Verify_wo_conf'] = (_df['res_0'] >= 0) == (_df['g'] > 0)
         _df['Verify_wo_conf'].replace({True: "Correct", False: "Wrong"}, inplace=True)
-        if chan > 1:
+        if chan == 2:
             _df['Verify_w_conf'] = ((_df['res_0'] >= 0) == (_df['g'] > 0)) == (_df['res_1'] >= 0)
             _df['Verify_w_conf'].replace({True: "Correct", False: "Wrong"}, inplace=True)
+        if chan == 3:
+            rename_dict = {
+                'res_0': 'overall_pred',
+                'res_1': 'CNN_pred',
+                'res_2': 'Confidence for CNN'
+            }
 
         # res: (B x C)/(B x 1)
         if chan > 1:
-            dic = torch.zeros_like(res[..., :-1])
+            dic = torch.zeros_like(res[..., 0])
             dic = dic.type_as(res).int() # move to cuda if required
-            dic[torch.where(res[..., :-1] >= 0)] = 1
+            dic[torch.where(res[..., 0] >= 0)] = 1
         else:
             dic = (res >= 0).type_as(res).int()
 

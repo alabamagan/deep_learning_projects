@@ -6,8 +6,6 @@
   operations:
     train:
       main: main
-      flags:
-        controller_cfg.net_name: 'rai_v1'
       flags-dest: config:rAIdiologist/config/flags/flags.yaml
       flags-import: all
       output-scalars:
@@ -21,8 +19,6 @@
 
     train-ddp:
       main: main --ddp
-      flags:
-        controller_cfg.net_name: 'rai_v1'
       flags-dest: config:rAIdiologist/config/flags/flags.yaml
       flags-import: all
       output-scalars:
@@ -49,15 +45,16 @@
           select:
           - 'Backup'
           - 'flags.yaml'
+          - 'rAIdiologist'
           target-type: 'link'
 
-    pretrain_pipeline:
-      flags:
-        net_name: 'rai_v1'
-        debug_mode: no
-      steps:
-        - run: train controller_cfg.net_name=${net_name} controller_cfg.debug_mode=${debug_mode}
-        - run: validation
+#    pretrain_pipeline:
+#      flags:
+#        net_name: 'rai_v1'
+#        debug_mode: no
+#      steps:
+#        - run: train controller_cfg.net_name=${net_name} controller_cfg.debug_mode=${debug_mode}
+#        - run: validation
 
   sourcecode:
     root: ./
@@ -74,6 +71,8 @@
       - file: './rAIdiologist/config/v1_rAIdiologist_transform.yaml'
         target-type: 'copy'
       - file: './rAIdiologist/config/v2_rAIdiologist_transform.yaml'
+        target-type: 'copy'
+      - file: './rAIdiologist/config/maxvit_inf_transform.yaml'
         target-type: 'copy'
 
     config:
