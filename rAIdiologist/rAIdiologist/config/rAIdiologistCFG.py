@@ -80,18 +80,20 @@ class MySolverCFG(rAIdiologistSolverCFG):
     # lr_sche_kwargs = "{'max_lr':1E-3,'total_steps':50,'cycle_momentum':True}"
     rAI_inf_save_playbacks = True
 
-    loss_function = ConfidenceBCELoss(weight = torch.as_tensor(class_weights))
+    # loss_function = ConfidenceBCELoss(weight = torch.as_tensor(class_weights))
 
-
+id_list_dir = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold"
+# id_list_dir = "./NPC_Segmentation/99.Testing/NPC_Screening/v3"
 class MyControllerCFG(PMIControllerCFG):
     run_mode     = 'training'
     fold_code     = 'B00'
-    id_list       = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold/{fold_code}.ini"
-    id_list_val   = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold/Validation.txt"
+    id_list       = id_list_dir + "/{fold_code}.ini"
+    id_list_val   = id_list_dir + "/Validation.txt"
     output_dir    = './NPC_Segmentation/98.Output/NPC_Screening_old/{fold_code}'
     cp_load_dir   = './Backup/rAIdiologist_{fold_code}.pt'
     cp_save_dir   = './Backup/rAIdiologist_{fold_code}.pt'
     log_dir       = f"./Backup/Log/rAIdiologist_{datetime.strftime(datetime.now(), '%Y-%m-%d')}.log"
+    rAI_pretrained_swran = './Backup/rAIdiologist_{fold_code}_pretrain.pt'
 
     _data_loader_cfg = data_loader
     _data_loader_inf_cfg = data_loader_inf
@@ -104,3 +106,11 @@ class MyControllerCFG(PMIControllerCFG):
 
     debug_validation = False
     compile_net = False
+
+
+class PretrainControllerCFG(MyControllerCFG):
+    solver_cls     = BinaryClassificationSolver
+    inferencer_cls = BinaryClassificationInferencer
+    cp_load_dir    = MyControllerCFG.cp_load_dir.replace('.pt', '_pretrain.pt')
+    cp_save_dir    = MyControllerCFG.cp_save_dir.replace('.pt', '_pretrain.pt')
+    output_dir     = MyControllerCFG.output_dir + "_pretrain"
