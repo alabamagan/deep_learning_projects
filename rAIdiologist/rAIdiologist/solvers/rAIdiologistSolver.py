@@ -77,8 +77,10 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         by the network. In mode 0, the output shape is (B x 1)"""
 
         # res: (B x C)/(B x 1), g: (B x 1)
+        g = g.detach().cpu()
+        res = res.detach().cpu()
         chan = res.shape[-1] # if chan > 1, there is a value for confidence
-        _data =np.concatenate([res.view(-1, chan).data.cpu().numpy(), g.data.view(-1, 1).cpu().numpy()], axis=-1)
+        _data =np.concatenate([res.view(-1, chan).data.numpy(), g.data.view(-1, 1).numpy()], axis=-1)
         _df = pd.DataFrame(data=_data, columns=['res_%i'%i for i in range(chan)] + ['g'])
         _df['Verify_wo_conf'] = (_df['res_0'] >= 0) == (_df['g'] > 0)
         _df['Verify_wo_conf'].replace({True: "Correct", False: "Wrong"}, inplace=True)
@@ -91,6 +93,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
                 'res_1': 'CNN_pred',
                 'res_2': 'Confidence for CNN'
             }
+            _df.rename(rename_dict, inplace=True, axis=1)
 
         # res: (B x C)/(B x 1)
         if chan > 1:
