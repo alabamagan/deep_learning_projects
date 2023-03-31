@@ -27,3 +27,18 @@ class rAIController(PMIController):
             self.inferencer_cls = BinaryClassificationInferencer
             self._data_loader_inf_cfg.augmentation = './maxvit_inf_transform.yaml'
 
+        if self.solver_cfg.rAI_fixed_mode == 3:
+            self.solver_cfg.batch_size_val = self.solver_cfg.batch_size // 4
+
+        # temp test to see if radiologist solver is problematic
+        if self.solver_cfg.rAI_fixed_mode == 0:
+            self.solver_cls = BinaryClassificationSolver
+            self.inferencer_cls = BinaryClassificationInferencer
+
+    def exec(self):
+        r"""Because the network might be redefined by guild after :func:`override_cfg` is called, the mode is explicitly
+        set here again since mode 0 using `BinaryClassificationSolver` doesn't have the callback to set it during run.
+        """
+        if not self.net_name in ('old_swran', 'new_swran', 'maxvit'):
+            self.solver_cfg.net.set_mode(self.solver_cfg.rAI_fixed_mode)
+        super(rAIController, self).exec()

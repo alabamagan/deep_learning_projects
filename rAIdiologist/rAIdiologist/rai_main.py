@@ -2,20 +2,24 @@ import os
 import copy
 import torch.distributed as dist
 from .config.network import *
+from .config.network.old.old_swran import SlicewiseAttentionRAN_old
 from .rai_controller import rAIController
 from pytorch_med_imaging.controller import PMIController, PMIControllerCFG
 
 global rai_options
 rai_options = {
     'networks': {
-        'rai_v1': rAIdiologist(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2),
-        'rai_v2': rAIdiologist_v2(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2),
-        'rai_v2_drop': rAIdiologist_v2(out_ch = 1, dropout = 0.3, lstm_dropout = 0.2),
-        'rai_v2_mean': rAIdiologist_v2(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2, reduce_strats='mean'),
-        'rai_v3': rAIdiologist_v3(out_ch = 1, dropout = 0.25, lstm_dropout = 0.2),
-        'rai_v4': rAIdiologist_v4(out_ch = 1, dropout = 0.15, lstm_dropout = 0.15),
-        'rai_v4_mean': rAIdiologist_v4mean(out_ch = 1, dropout = 0.2, lstm_dropout = 0.15),
-        'maxvit': MaxViT(1, 1, 64, (2, 2, 5, 2), window_size=5)
+        'rai_v1': create_rAIdiologist_v1(),
+        'rai_old': create_old_rAI(),
+        # 'rai_v2': rAIdiologist_v2(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2),
+        # 'rai_v2_drop': rAIdiologist_v2(out_ch = 1, dropout = 0.3, lstm_dropout = 0.2),
+        # 'rai_v2_mean': rAIdiologist_v2(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2, reduce_strats='mean'),
+        # 'rai_v3': rAIdiologist_v3(out_ch = 1, dropout = 0.05, lstm_dropout = 0.15),
+        # 'rai_v4': rAIdiologist_v4(out_ch = 1, dropout = 0.15, lstm_dropout = 0.15),
+        # 'rai_v4_mean': rAIdiologist_v4mean(out_ch = 1, dropout = 0.15, lstm_dropout = 0.15),
+        'maxvit': MaxViT(1, 1, 64, (2, 2, 5, 2), window_size=5),
+        'old_swran': SlicewiseAttentionRAN_old(1, 1),
+        'new_swran': SlicewiseAttentionRAN(1, 1, dropout = 0, reduce_strats='max')
     }
 }
 
