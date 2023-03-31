@@ -1,9 +1,19 @@
-- config: default-flags
-  flags-dest: config:config/flags/flags.yaml
-  flags-import: all
-
 - model: rAIdiologist
   operations:
+    pretrain:
+      main: main --pretrain
+      description: Pretrain the CNN
+      flags-dest: config:rAIdiologist/config/flags/flags.yaml
+      flags-import: all
+      output-scalars:
+        training/loss: 'EpochLoss: (\value)'
+        accuracy: 'ACC: (\value)'
+        training/validation_loss: 'VAL: (\value)'
+        step: 'Epoch (\step)'
+        training/step_lr: 'LR: (\value)'
+      requires:
+        - default
+
     train:
       main: main
       flags-dest: config:rAIdiologist/config/flags/flags.yaml
@@ -16,6 +26,18 @@
         training/step_lr: 'LR: (\value)'
       requires:
         - default
+        - operation: pretrain
+          optional: true
+          select:
+          - 'Backup/rAIdiologist_B00_pretrain.pt'
+          target-type: 'copy'
+          target-path: 'Backup'
+        - operation: train
+          optional: true
+          select:
+            - 'Backup/rAIdiologist_B00.pt'
+          target-type: 'copy'
+          target-path: 'Backup'
 
     train-ddp:
       main: main --ddp
@@ -59,10 +81,17 @@
   sourcecode:
     root: ./
     select:
+      - exclude:
+          dir: 'NPC_Segmentation'
+      - exclude:
+          dir: 'test'
+      - exclude:
+          dir: '__pycache__'
       - '*.py'
       - '*.pyx'
       - '*.txt'
       - '*.so'
+
 
   resources:
     default:
