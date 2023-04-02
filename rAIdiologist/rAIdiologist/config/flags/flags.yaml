@@ -8,6 +8,7 @@ solver_cfg:
   lr_sche: 'ExponentialLR'
   lr_sche_args: [0.99]
   lr_sche_kwargs: {}
+  compile_net: False
 
 controller_cfg:
   debug_mode: False
@@ -15,9 +16,8 @@ controller_cfg:
   inference_on_training_set : False
   validate_on_training_set: False
   fold_code: 'B00'
-  net_name: 'rai_v4'
+  net_name: 'rai_v1'
   matmul_precision: 'high'
-  compile_net: False
 
 data_loader_cfg:
   force_augment: False

@@ -18,14 +18,14 @@ class ConfidenceBCELoss(nn.Module):
         confidence score for the i-th sample. :math:`\sigma(\cdot)` denotes the sigmoid function, and :math:`\mathrm{clip}(\cdot)`
             is a function that clips its input values to be within a specified range.
     """
-    def __init__(self, *args, conf_factor=0.3, **kwargs):
+    def __init__(self, *args, conf_factor=0.3, conf_pos_weight=0.3, **kwargs):
         r"""Assumes input from model have already passed through sigmoid"""
         super(ConfidenceBCELoss, self).__init__()
         self.base_loss = nn.BCEWithLogitsLoss(*args, **kwargs, reduction='none')
         self.conf_factor = conf_factor
         # pos_weight punish wrong guess heavily while reward right guess lightly
         self.conf_loss = nn.BCEWithLogitsLoss(reduction='none',
-                                              pos_weight=torch.FloatTensor([.3]))
+                                              pos_weight=torch.FloatTensor([conf_pos_weight]))
 
         self.register_buffer('_epsilon', torch.DoubleTensor([1E-20]))
 

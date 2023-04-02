@@ -6,9 +6,9 @@ from .old_stdlayers import ResidualBlock3d, DoubleConv3d, Conv3d
 from .old_attres import AttentionModule_Modified
 
 
-__all__ = ['SlicewiseAttentionRAN', 'AttentionRAN_25D']
+__all__ = ['SlicewiseAttentionRAN_old', 'AttentionRAN_25D']
 
-class SlicewiseAttentionRAN(nn.Module):
+class SlicewiseAttentionRAN_old(nn.Module):
     r"""
 
 
@@ -35,8 +35,9 @@ class SlicewiseAttentionRAN(nn.Module):
                  save_mask: Optional[bool] = False,
                  save_weight: Optional[bool] = False,
                  exclude_fc: Optional[bool] = False,
-                 sigmoid_out: Optional[bool] = False):
-        super(SlicewiseAttentionRAN, self).__init__()
+                 sigmoid_out: Optional[bool] = False,
+                 **kwargs):
+        super(SlicewiseAttentionRAN_old, self).__init__()
 
         self.save_weight=save_weight
         self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 1], stride=[1, 1, 1], padding=[1, 1, 0])

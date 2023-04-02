@@ -66,12 +66,12 @@ class RAN_25D(nn.Module):
         # RAN
         self.in_conv2  = ResidualBlock3d(first_conv_ch, 256 ,                )
         self.att1      = AttentionModule_25d(256      , 256 , stage = 0      )
-        self.r1        = ResidualBlock3d(256          , 512 , p     = dropout)
+        self.r1        = ResidualBlock3d(256          , 512 , p     = dropout / 8.)
         self.att2      = AttentionModule_25d(512      , 512 , stage = 1      )
-        self.r2        = ResidualBlock3d(512          , 1024, p     = dropout)
+        self.r2        = ResidualBlock3d(512          , 1024, p     = dropout / 4.)
         self.att3      = AttentionModule_25d(1024     , 1024, stage = 2      )
-        self.out_conv1 = ResidualBlock3d(1024         , 2048, p     = dropout)
-        self.out_conv2 = nn.Sequential(*([ResidualBlock3d(2048, 2048, p = dropout)] * 2))
+        self.out_conv1 = ResidualBlock3d(1024         , 2048, p     = dropout / 2. )
+        self.out_conv2 = nn.Sequential(*([ResidualBlock3d(2048, 2048, p = 0.)] * 2))
 
         # Output layer
         self.out_bn = nn.Sequential(
@@ -100,7 +100,7 @@ class RAN_25D(nn.Module):
             list: ``top_slices`` - List of top index of non-zero slices.
         """
         # compute non-zero slices from seg if it is not None
-        _tmp = x.detach()
+        _tmp = x.detach().cpu()
         sum_slice = _tmp.sum(dim=[1, 2, 3])  # (B x S)
         # Raise error if everything is zero in any of the minibatch
         if 0 in list(sum_slice.sum(dim=[1])):
@@ -131,8 +131,6 @@ class RAN_25D(nn.Module):
         while x.dim() < 5:
             x = x.unsqueeze(0)
         nonzero_slice, _ = self.get_nonzero_slices(x)
-        seq_len = [nonzero_slice[n][1] for n in range(len(nonzero_slice))]
-
 
         x = self.in_conv1(x)
 
@@ -182,7 +180,8 @@ class RAN_25D(nn.Module):
         """
         # expect input x: (B x C x S)
         seq_len = [nonzero_slice[n][1] for n in range(len(nonzero_slice))]
-        x = self.out_bn(x).permute(0, 2, 1).contiguous() # x: (B x S x C)
+        # x = self.out_bn(x).permute(0, 2, 1).contiguous() # x: (B x S x C)
+        x = x.permute(0, 2, 1).contiguous()
 
         if self.reduce_strats == 0:
             x = torch.concat([x[i, a + 1:b].max(dim=0, keepdim=True).values for i, (a, b) in nonzero_slice.items()])
@@ -259,15 +258,12 @@ class SlicewiseAttentionRAN(RAN_25D):
             nn.MaxPool3d([2, 2, 1]),
             DoubleConv3d(int(first_conv_ch),
                          int(first_conv_ch * 2),
-                         kern_size=[3, 3, 1], padding=0, dropout=dropout, activation='leaky_relu'),
+                         kern_size=[3, 3, 1], padding=0, dropout=0.1, activation='leaky_relu'),
             nn.MaxPool3d([2, 2, 1]),
-            DoubleConv3d(int(first_conv_ch * 2), 1, kern_size=1, padding=0, dropout=dropout, activation='leaky_relu'),
+            DoubleConv3d(int(first_conv_ch * 2), 1, kern_size=1, padding=0, dropout=0.1, activation='leaky_relu'),
             nn.AdaptiveAvgPool3d([1, 1, None])
         )
         self.x_w = None
-        self.att1      = AttentionModule_25d_recur(256, 256)
-        self.att2      = AttentionModule_25d_recur(512, 512)
-        self.att3      = AttentionModule_25d_recur(1024, 1024)
 
     def forward(self, x):
         r"""Expect input (B x in_ch x H x W x S), output (B x out_ch)"""

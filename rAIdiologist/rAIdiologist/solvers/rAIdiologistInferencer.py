@@ -120,6 +120,6 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
 
 def _playback_clean_hook(module, input):
     r"""This hook cleans the rAIdiologist playback list prior to running a mini-batch"""
-    if isinstance(module, (rAIdiologist, rAIdiologist_v2, rAIdiologist_v3)):
+    if isinstance(module, (rAIdiologist)):
         module.clean_playback()
     return

@@ -142,9 +142,9 @@ class rAIdiologistSolver(BinaryClassificationSolver):
     def validation(self) -> list:
         original_mode = self.get_net()._mode.item()
         if not original_mode == 0:
-            self.get_net().set_mode(-1) # inference when not pretraining (i.e., mode = 0)
+            self.net.set_mode(-1) # inference when not pretraining (i.e., mode = 0)
         super(rAIdiologistSolver, self).validation()
-        self.get_net().set_mode(original_mode)
+        self.net.set_mode(original_mode)
 
     def _validation_step_callback(self, g: torch.Tensor, res: torch.Tensor, loss: Union[torch.Tensor, float],
                                   uids=None) -> None:

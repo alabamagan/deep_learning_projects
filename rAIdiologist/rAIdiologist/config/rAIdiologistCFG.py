@@ -1,4 +1,5 @@
 from pytorch_med_imaging.solvers import BinaryClassificationSolver
+from pytorch_med_imaging.inferencers import BinaryClassificationInferencer
 from pytorch_med_imaging.controller import PMIControllerCFG
 from pytorch_med_imaging.pmi_data_loader import PMIImageFeaturePairLoader, PMIImageFeaturePairLoaderCFG
 from pytorch_med_imaging.solvers.earlystop import LossReferenceEarlyStop
@@ -62,11 +63,10 @@ class MySolverCFG(rAIdiologistSolverCFG):
     init_lr      = 1E-4
     batch_size = 8
     num_of_epochs = 200
+    rAI_pretrained_swran = './Backup/rAIdiologist_{fold_code}_pretrain.pt'
 
     unpack_key_forward   = ['input'  , 'gt']
     unpack_key_inference = ['input']
-
-    class_weights = [1.15] # class weight for NPC +ve
 
     plot_to_tb = True
     early_stop = 'loss_reference'
@@ -80,7 +80,9 @@ class MySolverCFG(rAIdiologistSolverCFG):
     # lr_sche_kwargs = "{'max_lr':1E-3,'total_steps':50,'cycle_momentum':True}"
     rAI_inf_save_playbacks = True
 
-    # loss_function = ConfidenceBCELoss(weight = torch.as_tensor(class_weights))
+    loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([1.2]),
+                                      conf_factor=1,
+                                      conf_pos_weight=0.1)
 
 id_list_dir = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold"
 # id_list_dir = "./NPC_Segmentation/99.Testing/NPC_Screening/v3"
@@ -93,7 +95,6 @@ class MyControllerCFG(PMIControllerCFG):
     cp_load_dir   = './Backup/rAIdiologist_{fold_code}.pt'
     cp_save_dir   = './Backup/rAIdiologist_{fold_code}.pt'
     log_dir       = f"./Backup/Log/rAIdiologist_{datetime.strftime(datetime.now(), '%Y-%m-%d')}.log"
-    rAI_pretrained_swran = './Backup/rAIdiologist_{fold_code}_pretrain.pt'
 
     _data_loader_cfg = data_loader
     _data_loader_inf_cfg = data_loader_inf

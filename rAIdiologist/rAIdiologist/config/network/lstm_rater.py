@@ -82,6 +82,10 @@ class LSTM_rater(nn.Module):
         # required input size: (B x C x S), padding_mask: (B x S)
         num_slice = x.shape[-1]
 
+        # Convert seq_length to tensor if it isn't
+        if not isinstance(seq_length, torch.Tensor):
+            seq_length = torch.IntTensor(seq_length, requires_grad=False)
+
         # LSTM (B x C x S) -> (B x S x C)
         x = self.lstm_norm(x, seq_length=seq_length)
         x = pack_padded_sequence(x, seq_length, batch_first=True, enforce_sorted=False)
