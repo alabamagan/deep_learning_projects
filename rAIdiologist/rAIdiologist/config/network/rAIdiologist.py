@@ -170,18 +170,23 @@ class rAIdiologist(nn.Module):
             # Same sign = +1, diff sign = -1
             same_sign = cnn_sign * lstm_sign # B x 1
             weights = torch.sigmoid(o[:, 1].flatten())
-            lstm_weight = (weights - 0.5) * 2
-            # sigmoided weights < 0.5 -> -1, weights >= 0.5 -> 1
-            # lstm_weight_sign = lstm_weight / lstm_weight.abs() # B x 1
-            # same sign + lstm_weight > 0.5 no change, < 0.5 change
-            # lstm_weight_signchange = same_sign * lstm_weight_sign
-            # lstm_weight = lstm_weight * lstm_weight_signchange
-            o0 = o[:, 0].flatten() + reduced_x.flatten() * lstm_weight
-            # o0 = o[:,0] # Testing to not depend on CNN prediction first
-            o = torch.concat([o0.view(-1, 1),
-                              reduced_x.view(-1, 1),
-                              torch.narrow(o, 1, 1, 1)], dim=1)
-            o = o.view(-1, 3)
+
+            # the LSTM predicts the weight for CNN's prediction adaptively. The values are also expanded to -1 to 1 to
+            # allow for flipping the CNN's prediction
+            cnn_weight = (weights - 0.5) * 2
+
+            if self._mode == 3:
+                # if we train with both CNN and LSTM prediction together, the LSTM prediction is compressed to zero
+                # very quickly, so, we train the LSTM first
+                o = o[:,0]
+                o = o.view(-1, 1)
+            else:
+                # then, also train the LSTM to predict if the CNN prediction make sense
+                o0 = o[:, 0].flatten() + reduced_x.flatten() * cnn_weight
+                o = torch.concat([o0.view(-1, 1),
+                                  reduced_x.view(-1, 1),
+                                  torch.narrow(o, 1, 1, 1)], dim=1)
+                o = o.view(-1, 3)
             # o = o[:, 0].view(-1, 1)
         return o
 

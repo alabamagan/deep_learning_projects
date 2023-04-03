@@ -36,6 +36,7 @@ class SlicewiseAttentionRAN_old(nn.Module):
                  save_weight: Optional[bool] = False,
                  exclude_fc: Optional[bool] = False,
                  sigmoid_out: Optional[bool] = False,
+                 return_top: Optional[bool] = False,
                  **kwargs):
         super(SlicewiseAttentionRAN_old, self).__init__()
 
@@ -43,6 +44,7 @@ class SlicewiseAttentionRAN_old(nn.Module):
         self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 1], stride=[1, 1, 1], padding=[1, 1, 0])
         self.exclude_top = exclude_fc # Normally you don't have to use this.
         self.sigmoid_out = sigmoid_out
+        self.return_top = return_top
 
         # Slicewise attention layer
         self.in_sw = nn.Sequential(
@@ -106,6 +108,8 @@ class SlicewiseAttentionRAN_old(nn.Module):
             x = x.unsqueeze(0)
 
         if not self.exclude_top:
+            if self.return_top:
+                sw_prediction = x
             # Get best prediction across the slices
             x = x.max(dim=-1).values
 
@@ -114,7 +118,10 @@ class SlicewiseAttentionRAN_old(nn.Module):
                 x = x.unsqueeze(0)
             if self.sigmoid_out:
                 x = torch.sigmoid(x)
-        return x
+        if self.return_top:
+            return x, sw_prediction
+        else:
+            return x
 
 
     def get_mask(self):

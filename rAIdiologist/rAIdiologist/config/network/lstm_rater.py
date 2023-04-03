@@ -27,12 +27,13 @@ class LSTM_rater(nn.Module):
         # Batch size should be 1
         # self.lstm_reviewer = nn.LSTM(in_ch, embeded, batch_first=True, bias=True)
         self._out_ch = out_ch
+        self._sum_slices = 5
 
         self.dropout = nn.Dropout(p=dropout)
         self.out_fc = nn.Sequential(
-            nn.LayerNorm(embed_ch),
+            nn.LayerNorm(embed_ch * self._sum_slices),
             nn.ReLU(inplace=True),
-            nn.Linear(embed_ch, out_ch)
+            nn.Linear(embed_ch * self._sum_slices, out_ch)
         )
         self.lstm_norm = NormLayers.PaddedLayerNorm(in_ch)
         self.lstm = nn.LSTM(in_ch, embed_ch, bidirectional=bidirectional, num_layers=2, batch_first=True)
@@ -84,7 +85,7 @@ class LSTM_rater(nn.Module):
 
         # Convert seq_length to tensor if it isn't
         if not isinstance(seq_length, torch.Tensor):
-            seq_length = torch.IntTensor(seq_length, requires_grad=False)
+            seq_length = torch.Tensor(seq_length).int()
 
         # LSTM (B x C x S) -> (B x S x C)
         x = self.lstm_norm(x, seq_length=seq_length)
@@ -92,22 +93,22 @@ class LSTM_rater(nn.Module):
         # !note that bidirectional LSTM reorders reverse direction run of `output` (`_o`) already
         _o, (_h, _c) = self.lstm(x)
         unpacked_o = unpack_sequence(_o) # convert back into tensors, _o = list of B x (S x C)
+        last_slices = torch.stack([o[-self._sum_slices:].flatten() for o in unpacked_o])
+        o = self.out_fc(self.dropout(last_slices)) # _h: (L x B x C), o: (B x C_out)
 
-        o = self.out_fc(self.dropout(_h[-1])) # _h: (L x B x C), o: (B x C_out)
-
-        if self._RECORD_ON:
-            # d = direction, s = slice_index
-            # Note that RAN_25 eats top and bot slice, so `s` starts with 1
-            s = [torch.arange(oo.shape[0]).view(-1, 1) + 1 for oo in unpacked_o]
-            d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in unpacked_o]
-            if self._out_ch > 1:
-                # This is a hack, LSTM_rater should not know how the outer modules uses its output
-                sigmoid_conf =  [torch.sigmoid(self.out_fc(oo)[..., 1]).cpu().view(-1, 1) for oo in unpacked_o]
-                sw_pred = [self.out_fc(oo)[..., 0].cpu().view(-1, 1) for oo in unpacked_o]
-                self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, sigmoid_conf, s, d))])
-            else:
-                sw_pred = [self.out_fc(oo).cpu().view(-1, 1) for oo in unpacked_o]
-                self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, s, d))])
+        # if self._RECORD_ON:
+        #     # d = direction, s = slice_index
+        #     # Note that RAN_25 eats top and bot slice, so `s` starts with 1
+        #     s = [torch.arange(oo.shape[0]).view(-1, 1) + 1 for oo in unpacked_o]
+        #     d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in unpacked_o]
+        #     if self._out_ch > 1:
+        #         # This is a hack, LSTM_rater should not know how the outer modules uses its output
+        #         sigmoid_conf =  [torch.sigmoid(self.out_fc(oo)[..., 1]).cpu().view(-1, 1) for oo in unpacked_o]
+        #         sw_pred = [self.out_fc(oo)[..., 0].cpu().view(-1, 1) for oo in unpacked_o]
+        #         self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, sigmoid_conf, s, d))])
+        #     else:
+        #         sw_pred = [self.out_fc(oo).cpu().view(-1, 1) for oo in unpacked_o]
+        #         self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, s, d))])
             # row = torch.cat([_o, d.expand_as(_o), slice_index.expand_as(_o)], dim=-1) # concat chans
             # self.play_back.append(row)
         return o # no need to deal with up or down afterwards
