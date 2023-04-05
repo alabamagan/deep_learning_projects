@@ -31,20 +31,22 @@ class SlicewiseAttentionRAN_old(nn.Module):
     def __init__(self,
                  in_ch: int,
                  out_ch: int,
-                 first_conv_ch: Optional[int] = 64,
-                 save_mask: Optional[bool] = False,
-                 save_weight: Optional[bool] = False,
-                 exclude_fc: Optional[bool] = False,
-                 sigmoid_out: Optional[bool] = False,
-                 return_top: Optional[bool] = False,
+                 first_conv_ch: Optional[int]  = 64,
+                 save_mask    : Optional[bool] = False,
+                 save_weight  : Optional[bool] = False,
+                 exclude_fc   : Optional[bool] = False,
+                 sigmoid_out  : Optional[bool] = False,
+                 return_top   : Optional[bool] = False,
+                 reduce_by_mean: Optional[bool] = False,
                  **kwargs):
         super(SlicewiseAttentionRAN_old, self).__init__()
 
         self.save_weight=save_weight
         self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 1], stride=[1, 1, 1], padding=[1, 1, 0])
-        self.exclude_top = exclude_fc # Normally you don't have to use this.
-        self.sigmoid_out = sigmoid_out
-        self.return_top = return_top
+        self.exclude_top    = exclude_fc # Normally you don't have to use this.
+        self.sigmoid_out    = sigmoid_out
+        self.return_top     = return_top
+        self.reduce_by_mean = reduce_by_mean
 
         # Slicewise attention layer
         self.in_sw = nn.Sequential(
@@ -111,7 +113,10 @@ class SlicewiseAttentionRAN_old(nn.Module):
             if self.return_top:
                 sw_prediction = x
             # Get best prediction across the slices
-            x = x.max(dim=-1).values
+            if not self.reduce_by_mean:
+                x = x.max(dim=-1).values
+            else:
+                x = x.mean(dim=-1)
 
             x = self.out_fc1(x)
             while x.dim() < 2:
