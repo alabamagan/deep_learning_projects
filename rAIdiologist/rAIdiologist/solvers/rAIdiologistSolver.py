@@ -87,11 +87,12 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         if chan == 2:
             _df['Verify_w_conf'] = ((_df['res_0'] >= 0) == (_df['g'] > 0)) == (_df['res_1'] >= 0)
             _df['Verify_w_conf'].replace({True: "Correct", False: "Wrong"}, inplace=True)
-        if chan == 3:
+        if chan == 4:
             rename_dict = {
                 'res_0': 'overall_pred',
                 'res_1': 'CNN_pred',
-                'res_2': 'Confidence for CNN'
+                'res_2': 'Confidence for CNN',
+                'res_3': 'LSTM_pred'
             }
             _df.rename(rename_dict, inplace=True, axis=1)
 
@@ -133,18 +134,21 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         # If new mode is needed, change mode
         if not current_mode == self._current_mode:
             self._logger.info(f"Setting rAIdiologist mode to {current_mode}")
-            self._current_mode = current_mode
-            if isinstance(self.net, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)):
-                self.net.get_submodule('module').set_mode(self._current_mode)
-            else:
-                self.net.set_mode(self._current_mode)
+            self._set_net_mode(_current_mode)
+
+    def _set_net_mode(self, mode):
+        try:
+            self.net.get_submodule('module').set_mode(mode)
+        except:
+            self.net.set_mode(mode)
+        self._current_mode = mode
 
     def validation(self) -> list:
         original_mode = self.get_net()._mode.item()
-        if not original_mode == 0:
-            self.net.set_mode(-1) # inference when not pretraining (i.e., mode = 0)
+        if original_mode > 3:
+            self._set_net_mode(-1) # inference when not pretraining (i.e., mode = 0)
         super(rAIdiologistSolver, self).validation()
-        self.net.set_mode(original_mode)
+        self._set_net_mode(original_mode)
 
     def _validation_step_callback(self, g: torch.Tensor, res: torch.Tensor, loss: Union[torch.Tensor, float],
                                   uids=None) -> None:
