@@ -33,8 +33,10 @@ class rAIdiologist(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
         # LSTM for
-        self.lstm_rater = LSTM_rater(2048, out_ch=out_ch + 1, embed_ch=512, record=record,
-                                     iter_limit=iter_limit, dropout=lstm_dropout, bidirectional=False)
+        self.lstm_rater = LSTM_rater(2048, out_ch=out_ch + 1, embed_ch=256, record=record,
+                                     iter_limit=iter_limit, dropout=lstm_dropout, bidirectional=False,
+                                     sum_slices=3
+                                     )
 
         # Mode
         self.register_buffer('_mode', torch.IntTensor([mode]))
@@ -75,7 +77,7 @@ class rAIdiologist(nn.Module):
 
             # This should not have any grad but set it anyways
             self.lstm_rater.eval()
-        elif mode in (1, 3):
+        elif mode in (1, 3, 4):
             # pre-trained SRAN, train stage 1 RNN
             self.requires_grad_(True)
             self.cnn.requires_grad_(False)
@@ -87,7 +89,7 @@ class rAIdiologist(nn.Module):
 
             # Set LSTM to train mode for training
             self.lstm_rater.train()
-        elif mode in (2, 4):
+        elif mode in [2]:
             # fix RNN train SRAN
             self.requires_grad_(True)
             self.cnn.requires_grad_(True)
@@ -138,12 +140,12 @@ class rAIdiologist(nn.Module):
             x = x.unsqueeze(0)
         nonzero_slices, top_slices = RAN_25D.get_nonzero_slices(x.detach().cpu())
 
-        reduced_x, x = self.cnn(x)     # Shape -> (B x 2048 x S)
+        reduced_x, x = self.cnn(x)     # Shape -> x: (B x 2048 x S); reduced_x: (B x 1)
         x = self.dropout(x)
         while x.dim() < 3:
             x = x.unsqueeze(0)
 
-        if self.RECORD_ON:
+        if self.RECORD_ON and not self.training:
             # make a copy of cnn-encoded slices if record on.
             x_play_back = x.detach()
         x = x.permute(0, 2, 1).contiguous() # (B x C x S) -> (B x S x C)
@@ -152,42 +154,35 @@ class rAIdiologist(nn.Module):
         o = self.lstm_rater(x[:, 1:], # discard the first and last slice
                             torch.as_tensor(top_slices).int() - 1).contiguous() # -1 discard the last slice
 
-        if self.RECORD_ON:
+        if self.RECORD_ON and not self.training:
             # If record on, extract playback from lstm_rater and clean the playback for each mini-batch
             lpb = self.lstm_rater.get_playback() # lpb: (list) B x (S x 4), channels are: (sw_pred, sigmoid_conf, s, d)
             # because the x_play_back (B x C x S) was encoded, use cnn dense output layer to decode the predictions
             xpb = [xx for xx in self.cnn.out_fc1(x_play_back.permute(0, 2, 1)).cpu()] # B x (S x 1)
-            for _lpb, _reduced_x in zip(lpb, reduced_x.detach().cpu()):
-                _lpb[:, 1] = _lpb[:, 0] * _lpb[:, 1] + _reduced_x * (1 - _lpb[:, 1])
-            lpb = [_lpb[:, 1:].view(-1, 3) for _lpb in lpb]
-            self.play_back.extend([torch.concat([xx[:ll.shape[0]], ll], dim=-1) for xx, ll in zip(xpb, lpb)])
+            pb = []
+            for _lpb, _xpb, _reduced_x in zip(lpb, xpb, reduced_x.detach().cpu()):
+                _w = torch.sigmoid(_lpb[:, 1])
+                _pb = _lpb[:,0] * (1 - _w) + _reduced_x * _w
+                pb_row = torch.concat([_xpb[_lpb[:, 2].long()].view(-1, 1), _pb.view(-1, 1), _lpb[:, 2:]], dim=1)
+                pb.append(pb_row)
+            self.play_back.extend(pb)
             self.lstm_rater.clean_playback()
 
-        if self._mode >= 3:
-            # t = torch.concat([o, reduced_x], dim=1).view(-1, self.lstm_rater._out_ch + 1)
-            cnn_sign = reduced_x.flatten() / reduced_x.flatten().abs()  # B x 1
-            lstm_sign = o[:, 0].flatten() / o[:,0].flatten().abs()      # B x 1
-            # Same sign = +1, diff sign = -1
-            same_sign = cnn_sign * lstm_sign # B x 1
+        if self._mode == 3:
+            # if we train with both CNN and LSTM prediction together, the LSTM prediction is compressed to zero
+            # very quickly, so, we train the LSTM first
+            o = o[:,0]
+            o = o.view(-1, 1)
+        elif self._mode >= 4:
             weights = torch.sigmoid(o[:, 1].flatten())
-
-            # the LSTM predicts the weight for CNN's prediction adaptively. The values are also expanded to -1 to 1 to
-            # allow for flipping the CNN's prediction
-            cnn_weight = (weights - 0.5) * 2
-
-            if self._mode == 3:
-                # if we train with both CNN and LSTM prediction together, the LSTM prediction is compressed to zero
-                # very quickly, so, we train the LSTM first
-                o = o[:,0]
-                o = o.view(-1, 1)
-            else:
-                # then, also train the LSTM to predict if the CNN prediction make sense
-                o0 = o[:, 0].flatten() + reduced_x.flatten() * cnn_weight
-                o = torch.concat([o0.view(-1, 1),
-                                  reduced_x.view(-1, 1),
-                                  torch.narrow(o, 1, 1, 1)], dim=1)
-                o = o.view(-1, 3)
-            # o = o[:, 0].view(-1, 1)
+            # then, also train the LSTM to predict if the CNN prediction make sense
+            o0 = o[:, 0].flatten() * (1 - weights) + reduced_x.flatten() * weights
+            o = torch.concat([o0.view(-1, 1),
+                              reduced_x.view(-1, 1),
+                              torch.narrow(o, 1, 1, 1),
+                              torch.narrow(o, 1, 0, 1)], dim=1
+                             )
+            o = o.view(-1, 4)
         return o
 
     @staticmethod
@@ -231,7 +226,12 @@ def create_rAIdiologist_v2():
 
 def create_old_rAI():
     cnn = SlicewiseAttentionRAN_old(1, 1, exclude_fc=False, return_top=False)
-    return rAIdiologist(1, 1, dropout=0, lstm_dropout=0.1, custom_cnn=cnn)
+    return rAIdiologist(1, 1, dropout=0.15, lstm_dropout=0.15, custom_cnn=cnn)
+
+def create_old_rAI_rmean():
+    cnn = SlicewiseAttentionRAN_old(1, 1, exclude_fc=False, return_top=False, reduce_by_mean=True)
+    return rAIdiologist(1, 1, dropout=0.15, lstm_dropout=0.15, custom_cnn=cnn)
+
 
 # class rAIdiologist_v2(rAIdiologist):
 #     r"""This uses RAN_25D instead of SWRAN."""

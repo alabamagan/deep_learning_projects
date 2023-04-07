@@ -5,6 +5,7 @@ sys.path.append(str(Path('').absolute().parent))
 
 from rAIdiologist.config.network.rAIdiologist import *
 from rAIdiologist.config.network.slicewise_ran import *
+from rAIdiologist.config.network.old.old_swran import SlicewiseAttentionRAN_old
 from rAIdiologist.config.rAIdiologistCFG import *
 from rAIdiologist.solvers import *
 import unittest
@@ -37,10 +38,19 @@ class Test3DNetworks(unittest.TestCase):
         self.net = rAIdiologist(1, record=False).cuda()
 
     def run1(self, out):
-        self.assertEqual(2, out.dim(), "Failed during forward.")
+        msg = f"Dim test failed, expected dim = 2, got shape: {out.shape}"
+        self.assertEqual(2, out.dim(), msg)
 
     def run2(self, out):
         self.assertEqual(2, out.dim(), "Failed for batch-size = 1.")
+
+    def test_oldswran(self):
+        net = SlicewiseAttentionRAN_old(1, 1).cuda()
+        with torch.no_grad():
+            out = net(self.sample_input)
+            self.run1(out)
+            out = net(self.sample_input_size1)
+            self.run2(out)
 
     def test_rAIdiologist(self):
         net = self.net
@@ -102,29 +112,6 @@ class Test3DNetworks(unittest.TestCase):
         input_ten = torch.rand(1, 1, 350, 350, 40).cuda()
         with torch.no_grad():
             summary(net, input_ten, print_summary=True)
-
-class TestRAI_v3(Test3DNetworks):
-    def setUp(self) -> None:
-        super(TestRAI_v3, self).setUp()
-        self.net = rAIdiologist_v3(out_ch=1, record=False).cuda()
-
-    @unittest.SkipTest
-    def test_RAN_25D(self):
-        pass
-
-    @unittest.SkipTest
-    def test_RAN_25D_struct(self):
-        pass
-
-class TestRAI_v4(TestRAI_v3):
-    def setUp(self) -> None:
-        super(TestRAI_v3, self).setUp()
-        self.net = rAIdiologist_v4(out_ch=1, record=False).cuda()
-
-class TestRAI_v4_inversetop(TestRAI_v3):
-    def setUp(self) -> None:
-        super(TestRAI_v3, self).setUp()
-        self.net = rAIdiologist_v4_inversetop(out_ch=1, record=False).cuda()
 
 
 class TestRAIController(unittest.TestCase):

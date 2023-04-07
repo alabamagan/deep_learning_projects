@@ -1,6 +1,7 @@
 from typing import Optional, Union
 
 import torch
+from einops import rearrange, repeat
 from torch import nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence
 
@@ -22,21 +23,38 @@ class LSTM_rater(nn.Module):
          ...]
 
     """
-    def __init__(self, in_ch, embed_ch=1024, out_ch=2, record=False, iter_limit=5, dropout=0.2, bidirectional=False):
+    def __init__(
+            self,
+            in_ch           : int,
+            embed_ch        : Optional[int]   = 1024,
+            out_ch          : Optional[int]   = 2,
+            record          : Optional[bool]  = False,
+            iter_limit      : Optional[int]   = 5,
+            dropout         : Optional[float] = 0.2,
+            bidirectional   : Optional[bool]  = False,
+            sum_slices      : Optional[int]   = 5,
+    ) -> None:
         super(LSTM_rater, self).__init__()
         # Batch size should be 1
         # self.lstm_reviewer = nn.LSTM(in_ch, embeded, batch_first=True, bias=True)
         self._out_ch = out_ch
-        self._sum_slices = 5
+        self._sum_slices = sum_slices
 
+        # define dropout
         self.dropout = nn.Dropout(p=dropout)
+
+        # define FC
+        fc_chan = embed_ch * self._sum_slices
         self.out_fc = nn.Sequential(
-            nn.LayerNorm(embed_ch * self._sum_slices),
+            nn.LayerNorm(fc_chan),
             nn.ReLU(inplace=True),
-            nn.Linear(embed_ch * self._sum_slices, out_ch)
+            nn.Linear(fc_chan, out_ch)
         )
-        self.lstm_norm = NormLayers.PaddedLayerNorm(in_ch)
-        self.lstm = nn.LSTM(in_ch, embed_ch, bidirectional=bidirectional, num_layers=2, batch_first=True)
+
+        # define LSTM
+        lstm_in_ch = in_ch
+        self.lstm_norm = NormLayers.PaddedLayerNorm(lstm_in_ch)
+        self.lstm = nn.LSTM(lstm_in_ch, embed_ch, bidirectional=bidirectional, num_layers=2, batch_first=True)
 
         # for playback
         self.play_back = []
@@ -56,14 +74,9 @@ class LSTM_rater(nn.Module):
     def RECORD_ON(self, r):
         self._RECORD_ON = r
 
-    def forward(self, *args):
-        if self._mode in (1, 2, 3, 4, 5):
-            return self.forward_(*args)
-        else:
-            raise ValueError("There are only stage `1` or `2`, when mode = [1|2], this runs in stage 1, when "
-                             "mode = [3|4], this runs in stage 2.")
-
-    def forward_(self, x: torch.Tensor, seq_length: Union[torch.Tensor, list]):
+    def forward(self,
+                x: torch.Tensor,
+                seq_length: Union[torch.Tensor, list]):
         r"""Note that layer
 
 
@@ -75,19 +88,21 @@ class LSTM_rater(nn.Module):
                 A list of number of slices in each element of the input mini-batch. E.g., if the input is the padded
                 sequence with [10, 15, 13] slices, it would be padded into a a tensor of (3 x 15 x C), the seq length
                 would be [8, 13, 11] excluding the top and bottom slice of each element.
+            cnn_pred (torch.FloatTensor, Optinal):
+                This is the prediction of the CNN. If this is provided, the CNN value will be attached to the input
+                of x along the channel axis
 
         Returns:
 
         """
-        # assert x.shape[0] == 1, f"This rater can only handle one sample at a time, got input of dimension {x.shape}."
-        # required input size: (B x C x S), padding_mask: (B x S)
-        num_slice = x.shape[-1]
+        # required input size: (B x S x C)
+        num_slice = x.shape[1]
 
         # Convert seq_length to tensor if it isn't
         if not isinstance(seq_length, torch.Tensor):
             seq_length = torch.Tensor(seq_length).int()
 
-        # LSTM (B x C x S) -> (B x S x C)
+        # norm expects (B x S x C)
         x = self.lstm_norm(x, seq_length=seq_length)
         x = pack_padded_sequence(x, seq_length, batch_first=True, enforce_sorted=False)
         # !note that bidirectional LSTM reorders reverse direction run of `output` (`_o`) already
@@ -96,11 +111,21 @@ class LSTM_rater(nn.Module):
         last_slices = torch.stack([o[-self._sum_slices:].flatten() for o in unpacked_o])
         o = self.out_fc(self.dropout(last_slices)) # _h: (L x B x C), o: (B x C_out)
 
-        # if self._RECORD_ON:
-        #     # d = direction, s = slice_index
-        #     # Note that RAN_25 eats top and bot slice, so `s` starts with 1
-        #     s = [torch.arange(oo.shape[0]).view(-1, 1) + 1 for oo in unpacked_o]
-        #     d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in unpacked_o]
+        if self._RECORD_ON and not self.training:
+            # d = direction, s = slice_index
+            # Note that RAN_25 eats top and bot slice, so `s` starts with 1
+            for s in unpacked_o:
+                # s: (S x C) -> ss: (S - [sum_slice - 1] x sum_slice x C)
+                ss = torch.stack([torch.roll(s, -j, 0) for j in range(self._sum_slices)], dim=1)
+                ss = rearrange(ss, 'b s c -> b (s c)')[:len(s) - self._sum_slices]
+                risk_curve = self.out_fc(ss).cpu() # risk_curve: (S - [sum_slice - 1] x out_ch)
+                risk_curve_index = torch.arange(len(risk_curve)) + (self._sum_slices - 1) // 2
+                lstm_pb = torch.concat([risk_curve.view(-1, self._out_ch),  # 1st ch: lstm_pred; 2nd_ch: weight
+                                        risk_curve_index.view(-1, 1),       # index of representing slice
+                                        torch.zeros(len(risk_curve)).view(-1, 1)], dim=1)
+                self.play_back.append(lstm_pb)
+            # s = [torch.arange(oo.shape[0]).view(-1, 1) + 1 for oo in unpacked_o]
+            # d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in unpacked_o]
         #     if self._out_ch > 1:
         #         # This is a hack, LSTM_rater should not know how the outer modules uses its output
         #         sigmoid_conf =  [torch.sigmoid(self.out_fc(oo)[..., 1]).cpu().view(-1, 1) for oo in unpacked_o]

@@ -97,13 +97,13 @@ def generate_batch():
     X, y = rus.fit_resample(np.arange(len(npc_patients)).reshape(-1, 1),
                             df.loc[npc_patients]['Tstage'].to_numpy().astype('int'))
 
-    # Save some non-npc patients for validation set
-    bn_train, bn_test = train_test_split(non_npc_patients, test_size=0.3, random_state=random_seed)
 
-    # data going into k-fold validation set
-    new_index = bn_train.to_list() + npc_patients[X].flatten().tolist()
-    # and their demographics
+    # NPC + non-NPC patinets
+    new_index = non_npc_patients.tolist() + npc_patients[X].flatten().tolist()
     stats = df.loc[new_index].copy().sort_index()
+
+    # 10% as validation data
+    train, validation, _, __ = train_test_split(stats.index, stats['Tstage'], test_size=0.2, random_state=random_seed)
 
     # Create three fold for training data, put the rest as validation data
     splitter = StratifiedKFold(n_splits=3, random_state=random_seed, shuffle=True)
@@ -120,14 +120,17 @@ def generate_batch():
         CFG.write(open(f'./B{i:02d}.ini', 'w'))
 
     # not selected goes into validation
-    not_selected = set.union(set(df.index) - set(stats.index), set(bn_test))
-    not_selected = list(not_selected)
+    not_selected = validation.tolist()
 
     # undersample patients with Tstage 3 and 4
     not_selected.sort()
     open('./Validation.txt', 'w').writelines('\n'.join(not_selected))
 
-
+    # print summary
+    pprint.pprint({
+        'kfold': df.loc[train]['Tstage'].value_counts(),
+        'validation': df.loc[validation]['Tstage'].value_counts()
+    })
 
 
 if __name__ == '__main__':

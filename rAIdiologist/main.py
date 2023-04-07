@@ -14,7 +14,7 @@ global rai_options
 
 @click.command()
 @click.option('--inference', default=False, is_flag=True, help="For guild operation")
-@click.option('--ddp', default=False, help="For guild operation")
+@click.option('--ddp', default=False, is_flag=True, help="For guild operation")
 @click.option('--pretrain', default=False, is_flag=True, help="For guild operation")
 def main(inference, ddp, pretrain):
     if not pretrain:

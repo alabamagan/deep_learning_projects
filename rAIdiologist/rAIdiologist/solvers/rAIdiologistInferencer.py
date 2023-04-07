@@ -54,6 +54,7 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
         """
         if gt_list is None:
             raise AttributeError("gt_list should not be none, if there are no gt, it should be an empty list.")
+
         out_tensor = torch.cat(out_list, dim=0) #(NxC)
         if out_tensor.dim() < 2:
             out_tensor = out_tensor.unsqueeze(0)
@@ -82,7 +83,7 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
                                                           gt,
                                                           sig_out=True)
         try:
-            dl._data_table['Conf_0'] = out_tensor[..., 1]
+            dl._data_table['Conf_0'] = out_tensor[..., 2]
         except IndexError:
             pass
         try:
@@ -113,7 +114,7 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
             if isinstance(module, rAIdiologist):
                 playback = module.get_playback()
                 if len(playback) == 0:
-                    raise AttributeError("No playback is availble.")
+                    raise AttributeError("No playback is available.")
                 self.playbacks.extend(module.get_playback())
             return
         return copy_playback

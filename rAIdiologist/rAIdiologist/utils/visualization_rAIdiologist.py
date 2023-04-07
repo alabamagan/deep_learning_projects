@@ -125,13 +125,13 @@ def make_marked_slice(image: np.ndarray,
         ax_pred.axvline(x=vert_line, color='#0F0', linewidth=ax_pred_linewidth, alpha=0.7)
 
     # plot forward  LSTM run
-    line_forward = ax_pred.step(*plot_pair[0], linewidth=ax_pred_linewidth, color='yellow', alpha=0.7)[0]
+    line_forward = ax_pred.plot(*plot_pair[0], linewidth=ax_pred_linewidth, color='yellow', alpha=0.7)[0]
     # add_arrow(line_forward, direction = 'right', color = 'yellow'   , size = 4, position = plot_pair[0][0][-5])
     # plot cnn prediction if it exists
     if cnn_prediction is not None:
         ax_pred_reverse = ax_pred.twinx()
         ax_pred_reverse.set_axis_off()
-        line_cnn = ax_pred_reverse.step(*plot_pair[1], linewidth=ax_pred_linewidth, color='orange', alpha=0.7)[0]
+        line_cnn = ax_pred_reverse.plot(*plot_pair[1], linewidth=ax_pred_linewidth, color='orange', alpha=0.7)[0]
         align_yaxis(ax_pred, 0, ax_pred_reverse, 0)
 
     # plot backwards LSTM run if it exists

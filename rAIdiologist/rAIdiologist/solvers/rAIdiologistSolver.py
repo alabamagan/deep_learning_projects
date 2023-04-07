@@ -134,7 +134,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         # If new mode is needed, change mode
         if not current_mode == self._current_mode:
             self._logger.info(f"Setting rAIdiologist mode to {current_mode}")
-            self._set_net_mode(_current_mode)
+            self._set_net_mode(current_mode)
 
     def _set_net_mode(self, mode):
         try:

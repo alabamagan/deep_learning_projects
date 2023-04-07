@@ -181,6 +181,8 @@ class RAN_25D(nn.Module):
         # expect input x: (B x C x S)
         seq_len = [nonzero_slice[n][1] for n in range(len(nonzero_slice))]
         # x = self.out_bn(x).permute(0, 2, 1).contiguous() # x: (B x S x C)
+        # out_bn is affecting the performance. Differences between slices should not be reduced. Maybe can change to
+        # group norm later.
         x = x.permute(0, 2, 1).contiguous()
 
         if self.reduce_strats == 0:

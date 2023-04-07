@@ -29,13 +29,13 @@
         - operation: pretrain
           optional: true
           select:
-          - 'Backup/rAIdiologist_B00_pretrain.pt'
+          - '.*_pretrain.pt'
           target-type: 'copy'
           target-path: 'Backup'
         - operation: train
           optional: true
           select:
-            - 'Backup/rAIdiologist_B00.pt'
+            - 'Backup/rAIdiologist_*.pt'
           target-type: 'copy'
           target-path: 'Backup'
 
@@ -51,6 +51,12 @@
         training/step_lr: 'LR: (\value)'
       requires:
         - default
+        - operation: pretrain
+          optional: true
+          select:
+            - '.*_pretrain.pt'
+          target-type: 'copy'
+          target-path: 'Backup'
 
     validation:
       main: main --inference
