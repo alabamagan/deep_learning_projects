@@ -35,7 +35,7 @@
         - operation: train
           optional: true
           select:
-            - 'Backup/rAIdiologist_*.pt'
+            - 'Backup/rAIdiologist_[a-zA-Z0-9]*.pt'
           target-type: 'copy'
           target-path: 'Backup'
 
