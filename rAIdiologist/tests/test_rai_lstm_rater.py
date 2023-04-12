@@ -43,6 +43,16 @@ class Test3DNetworks(unittest.TestCase):
             o = self.net(self.sample_input_sequences_padded, self.seq_len)
             print(o.shape)
 
+    def test_lstm_rater_recordon(self):
+        self.net = LSTM_rater(self.num_chan, embed_ch=512, out_ch=2, record=True)
+        self.net.eval()
+        if self.has_cuda:
+            self.net = self.net.cuda()
+        with torch.no_grad():
+            print(self.sample_input_sequences_padded.shape)
+            o = self.net(self.sample_input_sequences_padded, self.seq_len)
+            print(o.shape)
+
     def test_lstm_rater_w_cnn_pred(self):
         self.net = LSTM_rater(self.num_chan, embed_ch=512, out_ch=2, forward_cnn_pred=True)
         if self.has_cuda:

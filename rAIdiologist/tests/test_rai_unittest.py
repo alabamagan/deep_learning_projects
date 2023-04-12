@@ -128,7 +128,9 @@ class TestRAIController(unittest.TestCase):
 
     def __init__(self, *args,**kwargs):
         super().__init__(*args, **kwargs)
-        self.controller = PMIController(MyControllerCFG())
+        cfg = MyControllerCFG()
+        cfg.data_loader_val_cfg.augmentation = '../rAIdiologist/config/v1_rAIdiologist_transform.yaml'
+        self.controller = PMIController(cfg)
         pass
 
     def test_s1_create(self):
