@@ -67,6 +67,7 @@
         PPV: 'PPV: (\value)'
         NPV: 'NPV: (\value)'
         ACC: 'OverallACC: (\value)'
+        AUC: 'OverallAUC: (\value)'
       requires:
         - default
         - operation: train
