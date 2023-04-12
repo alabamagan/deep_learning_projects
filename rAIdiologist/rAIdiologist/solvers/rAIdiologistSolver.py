@@ -139,8 +139,10 @@ class rAIdiologistSolver(BinaryClassificationSolver):
     def _set_net_mode(self, mode):
         try:
             self.net.get_submodule('module').set_mode(mode)
+            self.net.get_submodule('module').RECORD_ON = False
         except:
             self.net.set_mode(mode)
+            self.net.RECORD_ON = False
         self._current_mode = mode
 
     def validation(self) -> list:
