@@ -32,7 +32,7 @@ class LSTM_rater(nn.Module):
             iter_limit      : Optional[int]   = 5,
             dropout         : Optional[float] = 0.2,
             bidirectional   : Optional[bool]  = False,
-            sum_slices      : Optional[int]   = 5,
+            sum_slices      : Optional[int]   = 3,
     ) -> None:
         super(LSTM_rater, self).__init__()
         # Batch size should be 1
@@ -48,13 +48,15 @@ class LSTM_rater(nn.Module):
         self.out_fc = nn.Sequential(
             nn.LayerNorm(fc_chan),
             nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
             nn.Linear(fc_chan, out_ch)
         )
 
         # define LSTM
         lstm_in_ch = in_ch
         self.lstm_norm = NormLayers.PaddedLayerNorm(lstm_in_ch)
-        self.lstm = nn.LSTM(lstm_in_ch, embed_ch, bidirectional=bidirectional, num_layers=2, batch_first=True)
+        self.lstm = nn.LSTM(lstm_in_ch, embed_ch, bidirectional=bidirectional, num_layers=2, batch_first=True,
+                            dropout=dropout)
 
         # for playback
         self.play_back = []
@@ -104,38 +106,27 @@ class LSTM_rater(nn.Module):
 
         # norm expects (B x S x C)
         x = self.lstm_norm(x, seq_length=seq_length)
-        x = pack_padded_sequence(x, seq_length, batch_first=True, enforce_sorted=False)
+        x = pack_padded_sequence(self.dropout(x), seq_length, batch_first=True, enforce_sorted=False)
         # !note that bidirectional LSTM reorders reverse direction run of `output` (`_o`) already
         _o, (_h, _c) = self.lstm(x)
         unpacked_o = unpack_sequence(_o) # convert back into tensors, _o = list of B x (S x C)
-        last_slices = torch.stack([o[-self._sum_slices:].flatten() for o in unpacked_o])
-        o = self.out_fc(self.dropout(last_slices)) # _h: (L x B x C), o: (B x C_out)
-
-        if self._RECORD_ON and not self.training:
-            # d = direction, s = slice_index
-            # Note that RAN_25 eats top and bot slice, so `s` starts with 1
-            for s in unpacked_o:
-                # s: (S x C) -> ss: (S - [sum_slice - 1] x sum_slice x C)
-                ss = torch.stack([torch.roll(s, -j, 0) for j in range(self._sum_slices)], dim=1)
-                ss = rearrange(ss, 'b s c -> b (s c)')[:len(s) - self._sum_slices]
-                risk_curve = self.out_fc(ss).cpu() # risk_curve: (S - [sum_slice - 1] x out_ch)
-                risk_curve_index = torch.arange(len(risk_curve)) + (self._sum_slices - 1) // 2
-                lstm_pb = torch.concat([risk_curve.view(-1, self._out_ch),  # 1st ch: lstm_pred; 2nd_ch: weight
+        o = []
+        for s in unpacked_o:
+            # s: (S x C) -> (S x sum_slices x C) -> ss: (S - [sum_slice - 1] x sum_slice x C)
+            ss = torch.stack([torch.roll(s, -j, 0) for j in range(self._sum_slices)], dim=1)
+            ss = rearrange(ss, 'b s c -> b (s c)')[:-self._sum_slices + 1]
+            risk_curve = self.out_fc(ss) # risk_curve: (S - [sum_slice - 1] x out_ch)
+            o.append(risk_curve[-1])
+            if self._RECORD_ON and not self.training:
+                # Index of input already starts from 1, and sum_slice takes also extra slices.
+                risk_curve_index = torch.arange(len(risk_curve)) + (self._sum_slices - 1) // 2 + 1
+                lstm_pb = torch.concat([risk_curve.view(-1, self._out_ch).cpu(),  # 1st ch: lstm_pred; 2nd_ch: weight
                                         risk_curve_index.view(-1, 1),       # index of representing slice
                                         torch.zeros(len(risk_curve)).view(-1, 1)], dim=1)
                 self.play_back.append(lstm_pb)
-            # s = [torch.arange(oo.shape[0]).view(-1, 1) + 1 for oo in unpacked_o]
-            # d = [torch.zeros(oo.shape[0]).view(-1, 1) for oo in unpacked_o]
-        #     if self._out_ch > 1:
-        #         # This is a hack, LSTM_rater should not know how the outer modules uses its output
-        #         sigmoid_conf =  [torch.sigmoid(self.out_fc(oo)[..., 1]).cpu().view(-1, 1) for oo in unpacked_o]
-        #         sw_pred = [self.out_fc(oo)[..., 0].cpu().view(-1, 1) for oo in unpacked_o]
-        #         self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, sigmoid_conf, s, d))])
-        #     else:
-        #         sw_pred = [self.out_fc(oo).cpu().view(-1, 1) for oo in unpacked_o]
-        #         self.play_back.extend([torch.concat(row, dim=-1) for row in list(zip(sw_pred, s, d))])
-            # row = torch.cat([_o, d.expand_as(_o), slice_index.expand_as(_o)], dim=-1) # concat chans
-            # self.play_back.append(row)
+        o = torch.stack(o, dim=0)
+        # last_slices = torch.stack([o[-self._sum_slices:].flatten() for o in unpacked_o])
+        # o = self.out_fc(self.dropout(last_slices)) # _h: (L x B x C), o: (B x C_out)
         return o # no need to deal with up or down afterwards
 
     def clean_playback(self) -> None:

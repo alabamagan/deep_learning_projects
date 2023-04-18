@@ -16,6 +16,13 @@
 
     train:
       main: main
+      flags:
+        cnn_drop:
+          env-name: cnn_drop
+          default: 0.1
+        lstm_drop:
+          env-name: lstm_drop
+          default: 0.2
       flags-dest: config:rAIdiologist/config/flags/flags.yaml
       flags-import: all
       output-scalars:
@@ -72,12 +79,13 @@
         - default
         - operation: train
           select:
-          - 'Backup'
-          - 'flags.yaml'
-          - 'rAIdiologist'
+            - 'flags.yaml'
+            - 'rAIdiologist'
           target-type: 'link'
+        - copy-checkpoint
+        - link-log
 
-#    pretrain_pipeline:
+  #    pretrain_pipeline:
 #      flags:
 #        net_name: 'rai_v1'
 #        debug_mode: no
@@ -104,16 +112,28 @@
     default:
       - file: '../NPC_Segmentation'
         target-type: 'link'
-      - file: './rAIdiologist/config/v1_rAIdiologist_transform.yaml'
-        target-type: 'copy'
-      - file: './rAIdiologist/config/v2_rAIdiologist_transform.yaml'
-        target-type: 'copy'
-      - file: './rAIdiologist/config/maxvit_inf_transform.yaml'
+      - file: './rAIdiologist/config'
+        select:
+          - '.*\.yaml'
         target-type: 'copy'
 
     config:
       - file: rAIdiologist/config/flags/flags.yaml
         target-type: 'copy'
+
+    copy-checkpoint:
+      - operation: train
+        select:
+        - 'Backup/rAIdiologist_[a-zA-Z0-9]*.pt'
+        target-type: 'copy'
+        target-path: 'Backup'
+
+    link-log:
+      - operation: train
+        select:
+        - 'Backup/Log'
+        target-type: 'link'
+        target-path: 'Backup'
 
 #    recipe_rAIdiologist:
 #      description:

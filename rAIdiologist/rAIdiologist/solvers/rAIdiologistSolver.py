@@ -91,10 +91,12 @@ class rAIdiologistSolver(BinaryClassificationSolver):
             rename_dict = {
                 'res_0': 'overall_pred',
                 'res_1': 'CNN_pred',
-                'res_2': 'Confidence for CNN',
+                'res_2': 'Weights',
                 'res_3': 'LSTM_pred'
             }
             _df.rename(rename_dict, inplace=True, axis=1)
+            _df['Same sign'] = (_df['CNN_pred'] / _df['CNN_pred'].abs()) \
+                              == (_df['LSTM_pred'] / _df['LSTM_pred'].abs())
 
         # res: (B x C)/(B x 1)
         if chan > 1:

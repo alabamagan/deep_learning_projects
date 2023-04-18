@@ -21,14 +21,15 @@ import matplotlib.pyplot as plt
 global semaphore
 semaphore = Semaphore(mpi.cpu_count())
 
-def make_marked_slice(image: np.ndarray,
-                      cnn_prediction: Union[np.ndarray, Iterable[float]],
+def make_marked_slice(image          : np.ndarray,
+                      cnn_prediction : Union[np.ndarray, Iterable[float]],
                       lstm_prediction: Union[np.ndarray, Iterable[float]],
-                      slice_indices: Union[np.ndarray, Iterable[int]],
-                      direction: Union[np.ndarray, Iterable[int]],
-                      vert_line: Optional[int] = None,
-                      decision_point: Optional[int] = None,
-                      imshow_kwargs: Optional[dict] = {}
+                      conf           : Union[np.ndarray, Iterable[float]],
+                      slice_indices  : Union[np.ndarray, Iterable[int]],
+                      direction      : Union[np.ndarray, Iterable[int]],
+                      vert_line      : Optional[int]    = None,
+                      decision_point : Optional[int]    = None,
+                      imshow_kwargs  : Optional[dict]   = {}
                       ):
     r"""Make a 2D image where the input `image` is shown on it with a plot where `prediction` is the
     y-data and slice_indices is the x-data.
@@ -40,6 +41,8 @@ def make_marked_slice(image: np.ndarray,
             A vector of prediction values.
         lstm_prediction (np.ndarray):
             A vector of prediction values.
+        conf (np.ndarray):
+            Confidence vector.
         slice_indices (np.ndarray):
             A vector of the corresponding slices where the prediction were made.
         direction (np.ndarray):
@@ -76,6 +79,9 @@ def make_marked_slice(image: np.ndarray,
         _cnnprediction = cnn_prediction[np.argwhere(direction == _direction).ravel()]
         _prediction = lstm_prediction[np.argwhere(direction == _direction).ravel()]
         _slice_indices = slice_indices[np.argwhere(direction == _direction).ravel()]
+        if not conf is None:
+            _conf = conf[np.argwhere(direction == _direction).ravel()]
+
         if len(_prediction) == 0 or len(_slice_indices) == 0:
             continue
         _d_pred = np.concatenate([[0], np.diff(_prediction)]).ravel()
@@ -102,6 +108,8 @@ def make_marked_slice(image: np.ndarray,
 
         plot_pair.append((_slice_indices[:-i], _prediction[:-i]))
         plot_pair.append((_slice_indices[:-i], _cnnprediction[:-i]))
+        if conf is not None:
+            plot_pair.append((_slice_indices[:-i], _conf[:-i]))
 
     # draw the highlight boarder
     if RED_BOX_FLAG or BLUE_BOX_FLAG or AMBER_BOX_FLAG:
@@ -125,7 +133,10 @@ def make_marked_slice(image: np.ndarray,
         ax_pred.axvline(x=vert_line, color='#0F0', linewidth=ax_pred_linewidth, alpha=0.7)
 
     # plot forward  LSTM run
-    line_forward = ax_pred.plot(*plot_pair[0], linewidth=ax_pred_linewidth, color='yellow', alpha=0.7)[0]
+    markme = [plot_pair[2][1].argmax()] if conf is not None else None
+    marker = 'o' if markme is not None else None
+    line_forward = ax_pred.plot(*plot_pair[0], markevery=markme, marker=marker, markersize=ax_pred_linewidth * 2,
+                                linewidth=ax_pred_linewidth, color='yellow', alpha=0.7)[0]
     # add_arrow(line_forward, direction = 'right', color = 'yellow'   , size = 4, position = plot_pair[0][0][-5])
     # plot cnn prediction if it exists
     if cnn_prediction is not None:
@@ -140,6 +151,9 @@ def make_marked_slice(image: np.ndarray,
     #     ax_pred_reverse.set_axis_off()
     #     line_reverse = ax_pred_reverse.step(*plot_pair[2], linewidth=ax_pred_linewidth, color='lightblue', alpha=0.7)[0]
         # add_arrow(line_reverse, direction = 'right', color = 'lightblue', size = 4, position = plot_pair[1][0][-5])
+
+    # if confidence row exist
+
 
     # move the plot to the lower right
     ax_pred.set_position([.70, .05, .25, .1]) # x_start, y_start, x_length, y_length (float number 0 to 1)
@@ -157,11 +171,12 @@ def make_marked_slice(image: np.ndarray,
     return img_arr
 
 
-def mark_image_stacks(image_3d      : Union[torch.Tensor     , np.ndarray],
-                      cnnprediction : Union[np.ndarray       , Iterable[float]],
-                      prediction    : Union[np.ndarray       , Iterable[float]],
-                      indices       : Union[np.ndarray       , Iterable[int]],
-                      direction     : Union[np.ndarray       , Iterable[int]],
+def mark_image_stacks(image_3d     : Union[torch.Tensor, np.ndarray],
+                      cnnprediction: Union[np.ndarray  , Iterable[float]],
+                      prediction   : Union[np.ndarray  , Iterable[float]],
+                      conf         : Union[np.ndarray  , Iterable[float]],
+                      indices      : Union[np.ndarray  , Iterable[int]],
+                      direction    : Union[np.ndarray  , Iterable[int]],
                       verticle_lines: Optional[Iterable[int]] = None,
                       decision_point: Optional[int]           = None,
                       **kwargs):
@@ -194,10 +209,11 @@ def mark_image_stacks(image_3d      : Union[torch.Tensor     , np.ndarray],
                   f"{len(verticle_lines)} vs {image_3d.shape}"
             raise IndexError(msg)
         verts = verticle_lines
-    out_stack = np.stack([make_marked_slice(s, c, p, i, d, v, k) for s, c, p, i, d, v, k
+    out_stack = np.stack([make_marked_slice(*row) for row
                           in zip(image_3d.transpose(2, 1, 0),
                                  itertools.repeat(cnnprediction),
                                  itertools.repeat(prediction),
+                                 itertools.repeat(conf),
                                  itertools.repeat(indices),
                                  itertools.repeat(direction),
                                  verts,
@@ -267,6 +283,8 @@ def unpack_json(json_file: Union[Path, str],
     +--------+-------------------------------------------------------+
     | 2      | LSTM-prediction (only when CNN predictions are given) |
     +--------+-------------------------------------------------------+
+    | 3      | Confidence (only when LSTM prediction produces it     |
+    +--------+-------------------------------------------------------+
     | -2     | Slice index to plot                                   |
     +--------+-------------------------------------------------------+
     | -1     | Direction of LSTM read-out                            |
@@ -290,6 +308,8 @@ def unpack_json(json_file: Union[Path, str],
             The predictions as float values from CNN branch of rAIdiologist_v3.
         lstm_pred (np.ndarray):
             The predictions as float values.
+        conf (np.ndarray):
+            The confidence of the prediction as float values.
         sindex (np.ndarray):
             The slice index as integers.
         direction (np.ndarray):
@@ -301,17 +321,19 @@ def unpack_json(json_file: Union[Path, str],
         raise KeyError(f"The specified id {id} does not exist in target json file.")
 
     dataarray = np.asarray(json_dat[id])
-    if dataarray.shape[-1] == 4:
+    if dataarray.shape[-1] >= 4:
         cnn_pred  = dataarray[..., 0].ravel()
         lstm_pred = dataarray[..., 1].ravel()
+        conf      = dataarray[..., 2].ravel() if dataarray.shape[-1] == 5 else None
         direction = dataarray[..., -1].ravel()
         sindex    = dataarray[..., -2].ravel()
     else:
-        cnn_pred = None
+        cnn_pred  = None
+        conf      = None
         lstm_pred = dataarray[..., 0].ravel()
         direction = dataarray[..., -1].ravel()
         sindex    = dataarray[..., -2].ravel()
-    return cnn_pred, lstm_pred, sindex, direction
+    return cnn_pred, lstm_pred, conf, sindex, direction
 
 def label_images_in_dir(img_src: Union[Path, str],
                         json_file: Union[Path, str, dict],
@@ -354,12 +376,20 @@ def label_images_in_dir(img_src: Union[Path, str],
     pool = mpi.Pool(num_worker)
     for k in json_dat.keys():
         logger.info(f"Processing {k}")
-        cnn_pred, lstm_pred, indi, direction = unpack_json(json_dat, k)
+        cnn_pred, lstm_pred, conf, indi, direction = unpack_json(json_dat, k)
 
         _out_dir = out_dir.joinpath(f'{k}.gif')
         _im_dir = img_src.get_data_source(uids.index(k))
         p[k] = pool.apply_async(_wrap_mpi_mark_image_stacks,
-                                args=[_im_dir, cnn_pred, lstm_pred, indi, direction, _out_dir, kwargs])
+                                args=[_im_dir,
+                                      cnn_pred,
+                                      lstm_pred,
+                                      conf,
+                                      indi,
+                                      direction,
+                                      _out_dir,
+                                      kwargs
+                                      ])
         # _wrap_mpi_mark_image_stacks(_im_dir, pred, indi, _out_dir, kwargs)
         del lstm_pred, indi
 
@@ -370,12 +400,12 @@ def label_images_in_dir(img_src: Union[Path, str],
     pool.close()
     pool.join()
 
-def _wrap_mpi_mark_image_stacks(im_dir, cnn_pred, lstm_pred, indi, direction, outdir, kwargs):
+def _wrap_mpi_mark_image_stacks(im_dir, cnn_pred, lstm_pred, conf, indi, direction, outdir, kwargs):
     r"""Need this wrapper to keep memory usage reasonable"""
     global semaphore
     semaphore.acquire()
     im = tio.ScalarImage(im_dir)
-    stack = mark_image_stacks(im[tio.DATA].squeeze().permute(1, 2, 0), cnn_pred, lstm_pred, indi, direction, **kwargs)
+    stack = mark_image_stacks(im[tio.DATA].squeeze().permute(1, 2, 0), cnn_pred, lstm_pred, conf, indi, direction, **kwargs)
     marked_stack_2_gif(stack, outdir)
     im.clear()
     semaphore.release()

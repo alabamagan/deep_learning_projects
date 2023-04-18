@@ -10,7 +10,8 @@ RandomFlip:
 RandomNoise:
   std: [0, 8]
 CropOrPad:
-  - [350, 350, 30]
+  - [325, 325, 25]
   - padding_mode: 0
   - crop_pad_sides: "cct"
+  - mask_name: "probmap"
 

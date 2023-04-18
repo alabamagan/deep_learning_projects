@@ -21,11 +21,12 @@ class Test_visualization_rAIdiologist(unittest.TestCase):
             tmp_im = sitk.GetImageFromArray(np.zeros([512, 512, num_slices]))
             sitk.WriteImage(tmp_im, str(save_path))
 
-            vec = np.zeros([num_slices, 4])
-            vec[..., -2] = np.arange(num_slices)
-            vec[..., -1] = 0
-            vec[..., 1] = np.sin(vec[..., -2])
-            vec[..., 0] = np.cos(vec[..., -2])
+            vec = np.zeros([num_slices, 5])
+            vec[..., -2] = np.arange(num_slices) # index
+            vec[..., -1] = 0                     # direction
+            vec[..., 1] = np.sin(vec[..., -2])   # lstm prediction
+            vec[..., 0] = np.cos(vec[..., -2])   # cnn prediction
+            vec[..., 2] = np.cos(vec[..., -2])   # confidence
             out_json[f'IMG{i}'] = vec.tolist()
 
         cls.json_file_path = cls.tmp_img_path.joinpath("prediction.json")
@@ -41,16 +42,36 @@ class Test_visualization_rAIdiologist(unittest.TestCase):
         self.img_dir = self.tmp_img_path
         self.json = json.load(Path(self.__class__.json_file_path).open('r'))
         self.image = tio.ScalarImage(str(self.img_dir.joinpath('IMG0.nii.gz')))[tio.DATA].squeeze()
-        self.cnnprediction, self.prediction, self.indices, self.direction = unpack_json(self.json, 'IMG0')
+        self.cnnprediction, self.prediction, self.conf, self.indices, self.direction = unpack_json(self.json, 'IMG0')
         self.temp_out_dir  = tempfile.TemporaryDirectory()
 
     def test_mark_slice(self):
-        x1 = make_marked_slice(self.image[..., 15], self.cnnprediction,
-                               self.prediction, self.indices, self.direction)
-        x2 = make_marked_slice(self.image[..., 15], self.cnnprediction,
-                               self.prediction, self.indices, self.direction, vert_line=15)
-        x3 = make_marked_slice(self.image[..., 15], self.cnnprediction,
-                               self.prediction, self.indices, self.direction, imshow_kwargs={'cmap':'jet'})
+        x1 = make_marked_slice(
+            self.image[..., 15],
+            self.cnnprediction,
+            self.prediction,
+            self.conf,
+            self.indices,
+            self.direction
+        )
+        x2 = make_marked_slice(
+            self.image[..., 15],
+            self.cnnprediction,
+            self.prediction,
+            self.conf,
+            self.indices,
+            self.direction,
+            vert_line=15
+        )
+        x3 = make_marked_slice(
+            self.image[..., 15],
+            self.cnnprediction,
+            self.prediction,
+            self.conf,
+            self.indices,
+            self.direction,
+            imshow_kwargs={'cmap':'jet'}
+        )
 
         self.assertTrue(x1.shape == x2.shape == x3.shape)
 
@@ -58,6 +79,7 @@ class Test_visualization_rAIdiologist(unittest.TestCase):
         s = mark_image_stacks(self.image,
                               self.cnnprediction,
                               self.prediction,
+                              self.conf,
                               self.indices,
                               self.direction)
         marked_stack_2_grid(s, '/home/lwong/test.png')

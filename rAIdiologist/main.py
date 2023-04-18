@@ -3,12 +3,13 @@ from rAIdiologist.config.rAIdiologistCFG import *
 from rAIdiologist.config.network import *
 from rAIdiologist.rai_main import *
 from rAIdiologist.rai_controller import rAIController
+import logging
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import click
 import copy
-
+from mnts.mnts_logger import MNTSLogger
 global rai_options
 
 
@@ -21,6 +22,16 @@ def main(inference, ddp, pretrain):
         cfg = MyControllerCFG()
     else:
         cfg = PretrainControllerCFG()
+
+    # Guild is giving us trouble for double printing everything
+    cfg.verbose = False
+    logger_dict = logging.Logger.manager.loggerDict
+    formatter = logging.Formatter(MNTSLogger.log_format)
+    for logger_name, logger_instance in logger_dict.items():
+        if isinstance(logger_instance, logging.Logger):
+            for handlers in logger_instance.handlers:
+                handlers.setFormatter(formatter)
+
     if inference:
         if ddp:
             msg = "Inference mode can't run with DDP mode."

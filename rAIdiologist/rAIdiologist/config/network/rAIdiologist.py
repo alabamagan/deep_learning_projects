@@ -1,5 +1,5 @@
 import warnings
-
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,7 +21,13 @@ class rAIdiologist(nn.Module):
         super(rAIdiologist, self).__init__()
         self._RECORD_ON = None
         self._dropout_pdict = {}
+        self._out_ch = out_ch
         self.play_back = []
+
+        # for guild hyper param tunning
+        cnn_drop = os.getenv('cnn_drop') or dropout
+        lstm_drop = os.getenv('lstm_drop') or lstm_dropout
+
         # Create inception for 2D prediction
         #!   Note that sigmoid_out should be ``False`` when the loss is already `WithLogits`.
         self.cnn = custom_cnn or SlicewiseAttentionRAN(1,
@@ -45,6 +51,7 @@ class rAIdiologist(nn.Module):
         # initialization
         self.RECORD_ON = record
 
+
     @property
     def RECORD_ON(self):
         return self._RECORD_ON
@@ -52,7 +59,7 @@ class rAIdiologist(nn.Module):
     @RECORD_ON.setter
     def RECORD_ON(self, r):
         self._RECORD_ON = r
-        self.lstm_rater._RECORD_ON = r
+        self.lstm_rater.RECORD_ON = r
 
     def load_pretrained_swran(self, directory: str):
         return self.cnn.load_state_dict(torch.load(directory), strict=False)
@@ -161,9 +168,13 @@ class rAIdiologist(nn.Module):
             xpb = [xx for xx in self.cnn.out_fc1(x_play_back.permute(0, 2, 1)).cpu()] # B x (S x 1)
             pb = []
             for _lpb, _xpb, _reduced_x in zip(lpb, xpb, reduced_x.detach().cpu()):
-                _w = torch.sigmoid(_lpb[:, 1])
-                _pb = _lpb[:,0] * (1 - _w) + _reduced_x * _w
-                pb_row = torch.concat([_xpb[_lpb[:, 2].long()].view(-1, 1), _pb.view(-1, 1), _lpb[:, 2:]], dim=1)
+                _pb = _lpb[:,0]                 # risk curve
+                # concat the CNN predictions;
+                pb_row = torch.concat([
+                 _xpb[_lpb[:, -2].long()].view(-1, 1),   # CNN_prediction
+                 _pb.view(-1, 1),                        # risk_curve
+                 _lpb[:, -2:]                            # [index, direction]
+                ], dim=1)
                 pb.append(pb_row)
             self.play_back.extend(pb)
             self.lstm_rater.clean_playback()
@@ -174,15 +185,16 @@ class rAIdiologist(nn.Module):
             o = o[:,0]
             o = o.view(-1, 1)
         elif self._mode >= 4:
-            weights = torch.sigmoid(o[:, 1].flatten())
             # then, also train the LSTM to predict if the CNN prediction make sense
-            o0 = o[:, 0].flatten() * (1 - weights) + reduced_x.flatten() * weights
-            o = torch.concat([o0.view(-1, 1),                       # Overall Prediction
+            weights = 0.6 * torch.sigmoid(o[:, 1]).view(-1, 1) + 0.2 # restrict the range to 0.2 - 0.8
+            # o0 = torch.concat([o.view(-1, self._out_ch), reduced_x.view(-1, self._out_ch)], dim=1)
+            o0 = o[:, 0].view(-1, 1) * weights + reduced_x.view(-1, 1) * (1 - weights)
+            o = torch.concat([o0.view(-1, self._out_ch),            # Overall Prediction
                               reduced_x.view(-1, 1),                # CNN_Prediction
                               torch.narrow(o, 1, 1, 1),             # Adaptive weight
                               torch.narrow(o, 1, 0, 1)], dim=1      # LSTM prediction
                              )
-            o = o.view(-1, 4)
+            o = o.view(-1, self._out_ch + 3)
         return o
 
     @staticmethod
@@ -226,7 +238,7 @@ def create_rAIdiologist_v2():
 
 def create_old_rAI():
     cnn = SlicewiseAttentionRAN_old(1, 1, exclude_fc=False, return_top=False)
-    return rAIdiologist(1, 1, dropout=0.15, lstm_dropout=0.15, custom_cnn=cnn)
+    return rAIdiologist(1, 1, dropout=0.25, lstm_dropout=0.2, custom_cnn=cnn)
 
 def create_old_rAI_rmean():
     cnn = SlicewiseAttentionRAN_old(1, 1, exclude_fc=False, return_top=False, reduce_by_mean=True)

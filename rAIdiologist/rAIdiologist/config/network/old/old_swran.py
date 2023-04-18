@@ -1,10 +1,10 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Union, Optional
 from .old_stdlayers import ResidualBlock3d, DoubleConv3d, Conv3d
 from .old_attres import AttentionModule_Modified
-
 
 __all__ = ['SlicewiseAttentionRAN_old', 'AttentionRAN_25D']
 
@@ -31,13 +31,14 @@ class SlicewiseAttentionRAN_old(nn.Module):
     def __init__(self,
                  in_ch: int,
                  out_ch: int,
-                 first_conv_ch: Optional[int]  = 64,
-                 save_mask    : Optional[bool] = False,
-                 save_weight  : Optional[bool] = False,
-                 exclude_fc   : Optional[bool] = False,
-                 sigmoid_out  : Optional[bool] = False,
-                 return_top   : Optional[bool] = False,
-                 reduce_by_mean: Optional[bool] = False,
+                 first_conv_ch : Optional[int]   = 64,
+                 save_mask     : Optional[bool]  = False,
+                 save_weight   : Optional[bool]  = False,
+                 exclude_fc    : Optional[bool]  = False,
+                 sigmoid_out   : Optional[bool]  = False,
+                 return_top    : Optional[bool]  = False,
+                 reduce_by_mean: Optional[bool]  = False,
+                 dropout       : Optional[float] = 0.1,
                  **kwargs):
         super(SlicewiseAttentionRAN_old, self).__init__()
 
@@ -60,14 +61,16 @@ class SlicewiseAttentionRAN_old(nn.Module):
         )
         self.x_w = None
 
+        cnn_drop = float(os.getenv('cnn_drop', 0.1))
+
         # RAN
         self.in_conv2 = ResidualBlock3d(first_conv_ch, 256)
         self.att1 = AttentionModule_Modified(256, 256, save_mask=save_mask)
         self.r1 = ResidualBlock3d(256, 512, p=0.1)
         self.att2 = AttentionModule_Modified(512, 512, save_mask=save_mask)
-        self.r2 = ResidualBlock3d(512, 1024, p=0.1)
+        self.r2 = ResidualBlock3d(512, 1024, p=cnn_drop)
         self.att3 = AttentionModule_Modified(1024, 1024, save_mask=save_mask)
-        self.out_conv1 = ResidualBlock3d(1024, 2048, p=0.1)
+        self.out_conv1 = ResidualBlock3d(1024, 2048, p=cnn_drop)
 
         # Output layer
         self.out_fc1 = nn.Sequential(
@@ -127,7 +130,6 @@ class SlicewiseAttentionRAN_old(nn.Module):
             return x, sw_prediction
         else:
             return x
-
 
     def get_mask(self):
         #[[B,H,W,D],[B,H,W,D],[B,H,W,]]

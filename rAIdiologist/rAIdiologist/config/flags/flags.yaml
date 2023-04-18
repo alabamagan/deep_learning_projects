@@ -16,8 +16,12 @@ controller_cfg:
   inference_on_training_set : False
   validate_on_training_set: False
   fold_code: 'B00'
-  net_name: 'rai_v1'
+  net_name: 'rai_old'
   matmul_precision: 'high'
 
 data_loader_cfg:
   force_augment: False
+
+global_cfg:
+  cnn_drop: 0.1
+  lstm_drop: 0.2
