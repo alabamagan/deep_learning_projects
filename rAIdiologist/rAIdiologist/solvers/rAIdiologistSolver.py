@@ -180,3 +180,27 @@ class rAIdiologistSolver(BinaryClassificationSolver):
             store_dict['predictions'].extend(res.flatten().tolist())
         if isinstance(uids, (tuple, list)):
             store_dict['uids'].extend(uids)
+
+    def optimizer_set_params(self):
+        r"""The learning rate of RNN and CNN are inherently different, and we can't use the same for both and train
+        them together. Therefore, this method is overrided to tune the factor."""
+        if not isinstance(self.get_net(), rAIdiologist):
+            super().optimizer_set_params()
+        else:
+            net = self.net
+            lstm_factor = os.getenv('lstm_initlr_factor', 5)
+            assert isinstance(net, rAIdiologist), "Incorrect network setting."
+            args = [
+                {"params": net.cnn.parameters(), "lr": self.init_lr},
+                {"params": net.lstm_rater.parameters(), "lr": self.init_lr * 5},
+            ]
+            if self.optimizer == 'Adam':
+                self.optimizer = torch.optim.Adam(args)
+            elif self.optimizer == 'AdamW':
+                self.optimizer = torch.optim.AdamW(args)
+            elif self.optimizer == 'SGD':
+                for a in args:
+                    a['momentum'] = self.init_mom
+                self.optimizer = torch.optim.SGD(args)
+            else:
+                raise AttributeError(f"Expecting optimzer to be one of ['Adam'|'SGD'|'AdamW']")
