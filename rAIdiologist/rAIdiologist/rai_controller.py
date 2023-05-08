@@ -31,11 +31,11 @@ class rAIController(PMIController):
             self.solver_cfg.batch_size_val = self.solver_cfg.batch_size // 4
 
         # temp test to see if radiologist solver is problematic
-        if self.solver_cfg.rAI_fixed_mode == 0:
-            self.solver_cls = BinaryClassificationSolver
+        # if self.solver_cfg.rAI_fixed_mode == 0:
+        #     self.solver_cls = BinaryClassificationSolver
 
-        if self.net_name in ('old_swran'):
-            self.inferencer_cls = BinaryClassificationInferencer
+        # if self.net_name in ('old_swran'):
+        #     self.inferencer_cls = BinaryClassificationInferencer
 
     def exec(self):
         r"""Because the network might be redefined by guild after :func:`override_cfg` is called, the mode is explicitly

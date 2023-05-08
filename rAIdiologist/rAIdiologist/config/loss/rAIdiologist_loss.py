@@ -24,7 +24,7 @@ class ConfidenceBCELoss(nn.Module):
                                               pos_weight=torch.FloatTensor([conf_pos_weight]))
 
         self.register_buffer('_epsilon', torch.DoubleTensor([1E-20]))
-        self.register_buffer('_gamma', torch.DoubleTensor([float(os.environ.get('loss_gamma', 0.5))]))
+        self.register_buffer('_gamma', torch.DoubleTensor([float(os.environ.get('loss_gamma', 0.3))]))
         self.register_buffer('_sigma', torch.DoubleTensor([float(os.environ.get('loss_sigma', 5))]))
 
     def forward(self,
@@ -37,14 +37,13 @@ class ConfidenceBCELoss(nn.Module):
 
         if input.shape[-1] >= 2:
             cnn_pred  = input[..., 1].view(-1, 1)
-            weight    = input[..., 2].view(-1, 1)
+            weight    = input[..., 2].view(-1, 1) # this is already sigmoided
             lstm_pred = input[..., 3].view(-1, 1)
-            sig_weight = torch.sigmoid(weight).flatten()
 
-            overall_loss = loss_classification.flatten() 
-            lstm_loss = self.base_loss.forward(lstm_pred.flatten(), target.flatten()) * sig_weight
-            cnn_loss = self.base_loss.forward(cnn_pred.flatten(), target.flatten()) * (1 - sig_weight)
-            regularizer = self._gamma * weight.div(self._sigma).pow(2).flatten()
+            regularizer = - self._gamma * torch.log(weight)
+            overall_loss = loss_classification.flatten()
+            lstm_loss = self.base_loss.forward(lstm_pred.flatten(), target.flatten())
+            cnn_loss = self.base_loss.forward(cnn_pred.flatten(), target.flatten())
 
             torch.set_printoptions(precision=4, sci_mode=False)
             msg = pprint.pformat({
@@ -53,19 +52,17 @@ class ConfidenceBCELoss(nn.Module):
                 'cnn_loss': cnn_loss.view(-1, 1).detach().cpu(),
                 'reg': regularizer.view(-1, 1).detach().cpu()
             }, width=120)
-            print(msg)
 
             if input.requires_grad:
-                loss = (overall_loss + cnn_loss + lstm_loss) / 3. + regularizer
+                loss = (overall_loss.flatten() + lstm_loss.flatten() * weight.flatten()) /2. + regularizer.flatten()
                 loss = loss.mean()
             else:
                 # if input does not require gradient, assume it is in validation mode. Save checkpoint with best
                 # performance and ignore regularizer
-                loss = (overall_loss + cnn_loss + lstm_loss) / 3.
+                loss = overall_loss
                 loss = loss.mean()
         else:
             loss = loss_classification.mean()
-
         return loss
 
     @property

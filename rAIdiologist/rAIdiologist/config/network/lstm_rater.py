@@ -115,7 +115,12 @@ class LSTM_rater(nn.Module):
             # s: (S x C) -> (S x sum_slices x C) -> ss: (S - [sum_slice - 1] x sum_slice x C)
             ss = torch.stack([torch.roll(s, -j, 0) for j in range(self._sum_slices)], dim=1)
             ss = rearrange(ss, 'b s c -> b (s c)')[:-self._sum_slices + 1]
-            risk_curve = self.out_fc(ss) # risk_curve: (S - [sum_slice - 1] x out_ch)
+            fc_out = self.out_fc(ss) # risk_curve: (S - [sum_slice - 1] x out_ch)
+            risk_curve = fc_out[..., :-1].view(-1, self._out_ch - 1)
+            conf_curve = torch.sigmoid(fc_out[..., -1].view(-1, 1)).cumsum(dim=0)
+            conf_curve /= conf_curve.shape[0] # normalize by number of slice
+            risk_curve = (risk_curve * conf_curve.expand_as(risk_curve)).view(-1, 1).cumsum(dim=0)
+            risk_curve = torch.cat([risk_curve, conf_curve], dim=1)
             o.append(risk_curve[-1])
             if self._RECORD_ON and not self.training:
                 # Index of input already starts from 1, and sum_slice takes also extra slices.
@@ -223,9 +228,9 @@ class Transformer_rater(nn.Module):
 
         # embed with transformer encoder
         # input (B x C x S), but pos_encoding request [S, B, C]
-        # embed = self.embedding(self.pos_encoder(x.permute(2, 0, 1)), src_key_padding_mask=padding_mask)
+        embed = self.embedding(self.pos_encoder(rearrange(x, 'b c s -> s b c')), src_key_padding_mask=padding_mask)
         # embeded: (S, B, C) -> (B, S, C)
-        # embed = embed.permute(1, 0, 2)
+        embed = rearrange(embed, 's b c -> b s c')
 
         # LSTM embed: (B, S, C) -> _o: (B, S, 2 x C) !!LSTM is bidirectional!!
         # !note that LSTM reorders reverse direction run of `output` already

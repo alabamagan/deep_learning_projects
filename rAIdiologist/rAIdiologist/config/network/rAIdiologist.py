@@ -84,7 +84,7 @@ class rAIdiologist(nn.Module):
 
             # This should not have any grad but set it anyways
             self.lstm_rater.eval()
-        elif mode in (1, 3, 4):
+        elif mode in (1, 3):
             # pre-trained SRAN, train stage 1 RNN
             self.requires_grad_(True)
             self.cnn.requires_grad_(False)
@@ -96,15 +96,15 @@ class rAIdiologist(nn.Module):
 
             # Set LSTM to train mode for training
             self.lstm_rater.train()
-        elif mode in [2]:
+        elif mode in [2, 4]:
             # fix RNN train SRAN
             self.requires_grad_(True)
             self.cnn.requires_grad_(True)
             self.lstm_rater.requires_grad_(False)
-            self.lstm_rater.out_fc.requires_grad_(True)
+            # self.lstm_rater.out_fc.requires_grad_(False)
 
             # Set LSTM to eval model to disable batchnorm learning and dropouts from affecting the results
-            self.lstm_rater.eval()
+            self.lstm_rater.train()
 
             # Set CNN to train mode for training
             self.cnn.train()
@@ -179,16 +179,25 @@ class rAIdiologist(nn.Module):
             self.play_back.extend(pb)
             self.lstm_rater.clean_playback()
 
-        if self._mode == 3:
+        if self._mode == 4:
             # if we train with both CNN and LSTM prediction together, the LSTM prediction is compressed to zero
             # very quickly, so, we train the LSTM first
             o = o[:,0]
             o = o.view(-1, 1)
-        elif self._mode >= 4:
+        if self._mode == 1:
+            # Just return the lstm results, loss function will be BCE
+            o0 = o[:,0]
+            o = torch.concat([o0.view(-1, self._out_ch),            # Overall Prediction
+                              reduced_x.view(-1, 1),                # CNN_Prediction
+                              torch.narrow(o, 1, 1, 1),             # Adaptive weight
+                              torch.narrow(o, 1, 0, 1)], dim=1      # LSTM prediction
+                             )
+            o = o.view(-1, self._out_ch + 3)
+        elif self._mode in (3, 5):
             # then, also train the LSTM to predict if the CNN prediction make sense
             weights = 0.6 * torch.sigmoid(o[:, 1]).view(-1, 1) + 0.2 # restrict the range to 0.2 - 0.8
             # o0 = torch.concat([o.view(-1, self._out_ch), reduced_x.view(-1, self._out_ch)], dim=1)
-            o0 = o[:, 0].view(-1, 1) * weights + reduced_x.view(-1, 1) * (1 - weights)
+            o0 = o[:, 0].view(-1, 1) * weights + reduced_x.view(-1, 1) * 0.5
             o = torch.concat([o0.view(-1, self._out_ch),            # Overall Prediction
                               reduced_x.view(-1, 1),                # CNN_Prediction
                               torch.narrow(o, 1, 1, 1),             # Adaptive weight

@@ -1,13 +1,13 @@
 # This flag file specify what flags are passed to the guild manager
 
 solver_cfg:
-  batch_size: 4
+  batch_size: 8
   num_of_epochs: 200
   init_lr: 1e-5
-  rAI_fixed_mode: 0
+  rAI_fixed_mode: 5
   lr_sche: 'ExponentialLR'
-  lr_sche_args: [0.99]
-  lr_sche_kwargs: {}
+  lr_sche_args: '[0.99]'
+  lr_sche_kwargs: '{}'
   compile_net: False
 
 controller_cfg:
@@ -21,7 +21,3 @@ controller_cfg:
 
 data_loader_cfg:
   force_augment: False
-
-global_cfg:
-  cnn_drop: 0.1
-  lstm_drop: 0.2

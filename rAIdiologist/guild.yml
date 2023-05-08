@@ -23,6 +23,9 @@
         lstm_drop:
           env-name: lstm_drop
           default: 0.2
+        lstm_initlr_factor:
+          env-name: lstm_initlr_factor
+          default: 5
       flags-dest: config:rAIdiologist/config/flags/flags.yaml
       flags-import: all
       output-scalars:
@@ -85,6 +88,26 @@
         - copy-checkpoint
         - link-log
 
+    pretrain-validation:
+      main: main --inference --pretrain
+      flags-import: no
+      output-scalars:
+        sensitivity: 'Sensitivity: (\value)'
+        specificity: 'Specificity: (\value)'
+        PPV: 'PPV: (\value)'
+        NPV: 'NPV: (\value)'
+        ACC: 'OverallACC: (\value)'
+        AUC: 'OverallAUC: (\value)'
+      requires:
+        - default
+        - operation: train
+          select:
+            - 'flags.yaml'
+            - 'rAIdiologist'
+          target-type: 'link'
+        - copy-checkpoint
+        - link-log
+
   #    pretrain_pipeline:
 #      flags:
 #        net_name: 'rai_v1'
@@ -125,6 +148,13 @@
       - operation: train
         select:
         - 'Backup/rAIdiologist_[a-zA-Z0-9]*.pt'
+        target-type: 'copy'
+        target-path: 'Backup'
+
+    copy-checkpoint-pretrain:
+      - operation: pretrain
+        select:
+          - 'Backup/.*_pretrain.pt'
         target-type: 'copy'
         target-path: 'Backup'
 
