@@ -1,3 +1,5 @@
+# For training, patches of [325, 325, 25] is further sampled from the output normalized by this yaml file
+
 ToCanonical:
   {}
 Resample:

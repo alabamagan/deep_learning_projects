@@ -80,7 +80,7 @@ class MySolverCFG(rAIdiologistSolverCFG):
     # lr_sche_kwargs = "{'max_lr':1E-3,'total_steps':50,'cycle_momentum':True}"
     rAI_inf_save_playbacks = True
 
-    loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([1.2]),
+    loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([1.4]),
                                       conf_factor=1.5,
                                       conf_pos_weight=0.1)
 
