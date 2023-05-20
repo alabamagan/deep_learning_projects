@@ -84,6 +84,15 @@ class Test_visualization_rAIdiologist(unittest.TestCase):
                               self.direction)
         marked_stack_2_grid(s, '/home/lwong/test.png')
 
+    def test_mark_stack_wo_cnnprediction(self):
+        s = mark_image_stacks(self.image,
+                              None,
+                              self.prediction,
+                              self.conf,
+                              self.indices,
+                              self.direction)
+        marked_stack_2_grid(s, '/home/lwong/test.png')
+
     def test_label_images_in_dir(self):
         temp_dir = tempfile.TemporaryDirectory()
         label_images_in_dir(self.img_dir, self.json, temp_dir.name, idGlobber="MRI_[0-9]+")

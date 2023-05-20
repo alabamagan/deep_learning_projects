@@ -71,14 +71,15 @@ def make_marked_slice(image          : np.ndarray,
     ax[0].imshow(image.T, **default_imshow_kwargs)
     ax[0].set_position([0., 0., 1., 1.])
 
-    plot_pair = []
+    plot_pair = {}
     AMBER_BOX_FLAG = False
     RED_BOX_FLAG = False
     BLUE_BOX_FLAG = False
     for _direction in (0, 1):
-        _cnnprediction = cnn_prediction[np.argwhere(direction == _direction).ravel()]
         _prediction = lstm_prediction[np.argwhere(direction == _direction).ravel()]
         _slice_indices = slice_indices[np.argwhere(direction == _direction).ravel()]
+        if not cnn_prediction is None:
+            _cnnprediction = cnn_prediction[np.argwhere(direction == _direction).ravel()]
         if not conf is None:
             _conf = conf[np.argwhere(direction == _direction).ravel()]
 
@@ -92,24 +93,29 @@ def make_marked_slice(image          : np.ndarray,
 
         # mark the slice if the gradient > 0.5 and the prediciton > 1.0, empirically determined
         if not vert_line is None and not vert_line >= len(_d_pred):
-            if _d_pred[vert_line] > 0.5 and _prediction[vert_line] > 1.0:
-                if _direction == 0:
-                    RED_BOX_FLAG = True
-                else:
-                    BLUE_BOX_FLAG = True
-            if _d_pred[vert_line] > 0.3:
-                AMBER_BOX_FLAG = True
+            # if _d_pred[vert_line] > 0.5 and _prediction[vert_line] > 1.0:
+            #     if _direction == 0:
+            #         RED_BOX_FLAG = True
+            #     else:
+            #         BLUE_BOX_FLAG = True
+            # if _d_pred[vert_line] > 0.3:
+            #     AMBER_BOX_FLAG = True
+            # mask the slices after the vertical line
+            _last_slice_index = list(_slice_indices.astype('int')).index(vert_line) + 1
 
-        # drop zero paddings
-        i = 1
-        while np.isclose(_prediction[-i], 0, atol=3E-2):
-            i += 1
-            print(i)
+        else:
+            # drop zero paddings
+            i = 1
+            while np.isclose(_prediction[-i], 0, atol=3E-2):
+                i += 1
+            _last_slice_index = _prediction.shape[0] - i
 
-        plot_pair.append((_slice_indices[:-i], _prediction[:-i]))
-        plot_pair.append((_slice_indices[:-i], _cnnprediction[:-i]))
+        plot_pair['lstm'] = (_slice_indices[:_last_slice_index], _prediction[:_last_slice_index])
+        # this is optional
+        if not cnn_prediction is None:
+            plot_pair['cnn']= (_slice_indices[:_last_slice_index], _cnnprediction[:_last_slice_index])
         if conf is not None:
-            plot_pair.append((_slice_indices[:-i], _conf[:-i]))
+            plot_pair['conf'] = (_slice_indices[:_last_slice_index], _conf[:_last_slice_index])
 
     # draw the highlight boarder
     if RED_BOX_FLAG or BLUE_BOX_FLAG or AMBER_BOX_FLAG:
@@ -125,6 +131,7 @@ def make_marked_slice(image          : np.ndarray,
     ax_pred = ax[1]
     ax_pred.set_axis_off()
     ax_pred.axhline(0, 0, image.shape[-1], color='red', linewidth=ax_pred_linewidth, alpha=0.7) # plot a line at 0 or 0.5
+    ax_pred.set_xlim([slice_indices.min() - 1, slice_indices.max() + 1])
 
     # plot a vertical line for the current slice position
     if not vert_line is None:
@@ -133,16 +140,16 @@ def make_marked_slice(image          : np.ndarray,
         ax_pred.axvline(x=vert_line, color='#0F0', linewidth=ax_pred_linewidth, alpha=0.7)
 
     # plot forward  LSTM run
-    markme = [plot_pair[2][1].argmax()] if conf is not None else None
+    markme = [plot_pair['conf'][1].argmax()] if conf is not None else None
     marker = 'o' if markme is not None else None
-    line_forward = ax_pred.plot(*plot_pair[0], markevery=markme, marker=marker, markersize=ax_pred_linewidth * 2,
+    line_forward = ax_pred.plot(*plot_pair['lstm'], markevery=markme, marker=marker, markersize=ax_pred_linewidth * 2,
                                 linewidth=ax_pred_linewidth, color='yellow', alpha=0.7)[0]
     # add_arrow(line_forward, direction = 'right', color = 'yellow'   , size = 4, position = plot_pair[0][0][-5])
     # plot cnn prediction if it exists
     if cnn_prediction is not None:
         ax_pred_reverse = ax_pred.twinx()
         ax_pred_reverse.set_axis_off()
-        line_cnn = ax_pred_reverse.plot(*plot_pair[1], linewidth=ax_pred_linewidth, color='orange', alpha=0.7)[0]
+        line_cnn = ax_pred_reverse.plot(*plot_pair['cnn'], linewidth=ax_pred_linewidth, color='orange', alpha=0.7)[0]
         align_yaxis(ax_pred, 0, ax_pred_reverse, 0)
 
     # plot backwards LSTM run if it exists
@@ -172,7 +179,7 @@ def make_marked_slice(image          : np.ndarray,
 
 
 def mark_image_stacks(image_3d     : Union[torch.Tensor, np.ndarray],
-                      cnnprediction: Union[np.ndarray  , Iterable[float]],
+                      cnnprediction: Union[np.ndarray  , Iterable[Union[float, None]]],
                       prediction   : Union[np.ndarray  , Iterable[float]],
                       conf         : Union[np.ndarray  , Iterable[float]],
                       indices      : Union[np.ndarray  , Iterable[int]],
@@ -200,7 +207,6 @@ def mark_image_stacks(image_3d     : Union[torch.Tensor, np.ndarray],
     if isinstance(image_3d, torch.Tensor):
         image_3d = image_3d.numpy()
     assert image_3d.ndim == 3, f"Input image_3d must be 3D, got: {image_3d.ndim}D with shape {image_3d.shape}"
-
     if verticle_lines is None:
         verts = range(image_3d.shape[0] - 1)
     else:
@@ -239,9 +245,7 @@ def marked_stack_2_grid(marked_stack: Union[torch.Tensor, np.ndarray],
     if isinstance(marked_stack, np.ndarray):
         marked_stack = torch.as_tensor(marked_stack)
 
-    print(marked_stack.shape)
     img_grid = make_grid(marked_stack.float().permute(0, 3, 1, 2), nrow=nrow, padding=1, normalize=True, pad_value=0)
-    print(img_grid.shape)
     img_grid = (img_grid.numpy().copy() * 255).astype('uint8').transpose(1, 2, 0)
     imageio.imsave(out_dir, img_grid, format='png')
 
