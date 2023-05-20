@@ -7,6 +7,7 @@ from torchvision.utils import make_grid
 import multiprocessing as mpi
 import itertools
 import imageio
+from scipy import interpolate
 from pytorch_med_imaging.med_img_dataset import ImageDataSet
 from functools import partial
 from pathlib import Path
@@ -186,6 +187,7 @@ def mark_image_stacks(image_3d     : Union[torch.Tensor, np.ndarray],
                       direction    : Union[np.ndarray  , Iterable[int]],
                       verticle_lines: Optional[Iterable[int]] = None,
                       decision_point: Optional[int]           = None,
+                      zoom_grid     : Optional[Union[int, Iterable[int]]] = None,
                       **kwargs):
     r"""Call `make_marked_slices` for all slices of the input image.
 
@@ -215,6 +217,36 @@ def mark_image_stacks(image_3d     : Union[torch.Tensor, np.ndarray],
                   f"{len(verticle_lines)} vs {image_3d.shape}"
             raise IndexError(msg)
         verts = verticle_lines
+
+    if zoom_grid is not None:
+        # crop the image to defined size
+        if isinstance(zoom_grid, int):
+            zoom_grid = np.array([zoom_grid, zoom_grid])
+        else:
+            if len(zoom_grid) > 2:
+                raise ValueError(f"zoom_grid speicification error {zoom_grid}")
+            zoom_grid =np.array(zoom_grid)
+
+        original_size = np.array(image_3d.shape)
+        img_center = np.array(image_3d.shape[:2]) // 2
+        start_index = img_center - zoom_grid // 2
+        end_index = start_index + zoom_grid
+        image_3d = image_3d[start_index[0]:end_index[0], start_index[1]:end_index[1]]
+
+        # Interpolate to original size
+        interpolated_image = np.empty(original_size)
+        x, y = np.arange(image_3d.shape[0]), np.arange(image_3d.shape[1])
+        new_x = np.linspace(0, image_3d.shape[0], original_size[0])
+        new_y = np.linspace(0, image_3d.shape[1], original_size[1])
+
+        for z in range(image_3d.shape[2]):
+            interpolator = interpolate.interp2d(x, y, image_3d[:, :, z], kind='linear')
+            interpolated_image[:, :, z] = interpolator(new_x, new_y)
+        image_3d = interpolated_image
+        print(image_3d.shape)
+
+
+
     out_stack = np.stack([make_marked_slice(*row) for row
                           in zip(image_3d.transpose(2, 1, 0),
                                  itertools.repeat(cnnprediction),
