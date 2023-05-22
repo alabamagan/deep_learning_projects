@@ -118,6 +118,18 @@ def make_marked_slice(image          : np.ndarray,
         if conf is not None:
             plot_pair['conf'] = (_slice_indices[:_last_slice_index], _conf[:_last_slice_index])
 
+        # Get display ylim to ensure the lines are not cropped
+        dy = abs(0.05 * _prediction.mean())
+        pred_ylim = [_prediction.min() - dy, _prediction.max() + dy]
+        if cnn_prediction is not None:
+            cnn_ylim = [cnn_prediction.min() - dy, cnn_prediction.max() + dy]
+            pred_ylim[0] = min(cnn_ylim[0], pred_ylim[0])
+            pred_ylim[1] = min(cnn_ylim[1], pred_ylim[1])
+        # Make sure the red reference line is visible
+        pred_ylim[0] = min(pred_ylim[0], -0.05)
+        pred_ylim[1] = max(pred_ylim[1], 0.05)
+        assert pred_ylim[1] > pred_ylim[0], "Error when calculating the display ylim."
+
     # draw the highlight boarder
     if RED_BOX_FLAG or BLUE_BOX_FLAG or AMBER_BOX_FLAG:
         if RED_BOX_FLAG:
@@ -133,6 +145,7 @@ def make_marked_slice(image          : np.ndarray,
     ax_pred.set_axis_off()
     ax_pred.axhline(0, 0, image.shape[-1], color='red', linewidth=ax_pred_linewidth, alpha=0.7) # plot a line at 0 or 0.5
     ax_pred.set_xlim([slice_indices.min() - 1, slice_indices.max() + 1])
+    ax_pred.set_ylim(pred_ylim)
 
     # plot a vertical line for the current slice position
     if not vert_line is None:
