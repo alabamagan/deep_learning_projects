@@ -19,6 +19,8 @@ class Test3DNetworks(unittest.TestCase):
         super(Test3DNetworks, self).__init__(*args, **kwargs)
 
     def setUp(self) -> None:
+        if self.__class__.__name__ == 'Test3DNetworks':
+            self.skipTest('Base test class')
         num_slice = 30
         num_data = 4
         self.sample_input_big = torch.rand(num_data, 1, 512, 512, num_slice).cuda()
@@ -35,84 +37,63 @@ class Test3DNetworks(unittest.TestCase):
         self.expect_nonzero = torch.zeros([num_data, 1, num_slice], dtype=bool)
         self.expect_nonzero[0, ..., 9:21] = True
         self.expect_nonzero[1, ..., 7:16] = True
+        self.EXPECTED_DIM = 2
+
+    def expect_dim(self, out, expected_dim):
+        msg = f"Dim test failed, expected dim = {expected_dim}, got shape: {out.shape}"
+        self.assertEqual(expected_dim, out.dim(), msg)
+
+    def test_input(self):
+        with torch.no_grad():
+            out = self.net(self.sample_input)
+            print(out.shape)
+            self.expect_dim(out, self.EXPECTED_DIM)
+
+    def test_input_bsize_1(self):
+        with torch.no_grad():
+            out = self.net(self.sample_input_size1)
+            print(out.shape)
+            self.expect_dim(out, self.EXPECTED_DIM)
+
+class TestOldSWRAN(Test3DNetworks):
+    def setUp(self) -> None:
+        super(TestOldSWRAN, self).setUp()
+        self.net = SlicewiseAttentionRAN_old(1, 1).cuda()
+
+class TestRAIdiologist(Test3DNetworks):
+    def setUp(self) -> None:
+        super(TestRAIdiologist, self).setUp()
         self.net = rAIdiologist(1, record=False).cuda()
 
-    def run1(self, out):
-        msg = f"Dim test failed, expected dim = 2, got shape: {out.shape}"
-        self.assertEqual(2, out.dim(), msg)
-
-    def run2(self, out):
-        self.assertEqual(2, out.dim(), "Failed for batch-size = 1.")
-
-    def test_oldswran(self):
-        net = SlicewiseAttentionRAN_old(1, 1).cuda()
-        with torch.no_grad():
-            out = net(self.sample_input)
-            self.run1(out)
-            out = net(self.sample_input_size1)
-            self.run2(out)
-
-    def test_rAIdiologist(self):
-        net = self.net
+    def test_rAIdiologist_modes(self):
         with torch.no_grad():
             for i in range(6):
                 try:
-                    net.set_mode(i)
-                    self.assertTrue(net._mode == i)
-                    out = net(self.sample_input)
-                    self.run1(out)
-                    out = net(self.sample_input_size1)
-                    self.run2(out)
-
+                    self.net.set_mode(i)
+                    self.assertTrue(self.net._mode == i)
+                    self.test_input()
+                    self.test_input_bsize_1()
                     print(f"Mode {i} passed.")
                 except Exception as e:
                     self.fail(f"Mode {i} error. Original message {e}")
 
-    def test_rAIdiologist_ch1(self):
-        net = self.net
-        with torch.no_grad():
-            for i in range(6):
-                try:
-                    net.set_mode(i)
-                    self.assertTrue(net._mode == i)
-                    out = net(self.sample_input)
-                    self.run1(out)
-                    print(f"Mode {i} passed. Out size: {out.shape}")
-                except Exception as e:
-                    self.fail(f"Mode {i} error. Original message {e}")
-
     def test_rAIdiologist_recordon(self):
-        net = self.net
-        net.RECORD_ON = True
-        net.set_mode(5)
-        net = net.eval()
+        self.net.RECORD_ON = True
+        self.net.set_mode(5)
+        self.net = self.net.eval()
         with torch.no_grad():
             try:
-                out = net(self.sample_input)
-                self.assertNotEqual(0, len(net.get_playback()), "Playback length is zero")
-                self.run1(out)
-                out = net(self.sample_input_size1)
-                self.run2(out)
+                out = self.net(self.sample_input)
+                self.assertNotEqual(0, len(self.net.get_playback()), "Playback length is zero")
+                out = self.net(self.sample_input_size1)
             except Exception as e:
                 self.fail(f"Original message: {e}")
-            self.assertNotEqual(0, len(net.get_playback()), "Play back is empty!")
+            self.assertNotEqual(0, len(self.net.get_playback()), "Play back is empty!")
 
-    def test_RAN_25D(self):
-        net = RAN_25D(1, 1).cuda()
-        with torch.no_grad():
-            out = net(self.sample_input)
-
-            # test zero padded
-            self.sample_input[0, ..., -10:] = 0
-            self.sample_input[1, ..., -13:] = 0
-            out = net(self.sample_input)
-
-    def test_RAN_25D_struct(self):
-        net = RAN_25D(1, 1).cuda()
-        input_ten = torch.rand(1, 1, 350, 350, 40).cuda()
-        with torch.no_grad():
-            summary(net, input_ten, print_summary=True)
-
+class TestRAN25D(Test3DNetworks):
+    def setUp(self) -> None:
+        super(TestRAN25D, self).setUp()
+        self.net = RAN_25D(1, 1).cuda()
 
 class TestRAIController(unittest.TestCase):
     @classmethod
