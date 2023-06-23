@@ -105,7 +105,7 @@
             - 'flags.yaml'
             - 'rAIdiologist'
           target-type: 'link'
-        - copy-checkpoint
+        - copy-checkpoint-pretrain
         - link-log
 
   #    pretrain_pipeline:

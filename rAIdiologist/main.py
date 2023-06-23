@@ -3,6 +3,7 @@ from rAIdiologist.config.rAIdiologistCFG import *
 from rAIdiologist.config.network import *
 from rAIdiologist.rai_main import *
 from rAIdiologist.rai_controller import rAIController
+import yaml
 import logging
 import torch
 import torch.distributed as dist
@@ -37,6 +38,15 @@ def main(inference, ddp, pretrain):
             msg = "Inference mode can't run with DDP mode."
             raise ArithmeticError(msg)
         cfg.run_mode = 'inference'
+
+    # If pretrain, force mode open to 0
+    if pretrain:
+        with open('flags.yaml', 'r') as f:
+            loaded_flags = yaml.safe_load(f.read())
+        loaded_flags['solver_cfg']['rAI_fixed_mode'] = 0
+        print(loaded_flags)
+        with open('flags.yaml', 'w') as f:
+            yaml.dump(loaded_flags, f)
 
     # If DDP mode is not on, simply execute one process
     if not ddp:
