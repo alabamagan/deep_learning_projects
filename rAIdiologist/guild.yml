@@ -99,14 +99,16 @@
         ACC: 'OverallACC: (\value)'
         AUC: 'OverallAUC: (\value)'
       requires:
-        - default
-        - operation: train
+        - operation: pretrain
           select:
             - 'flags.yaml'
+          target-type: 'copy'
+        - default
+        - operation: pretrain
+          select:
             - 'rAIdiologist'
           target-type: 'link'
         - copy-checkpoint-pretrain
-        - link-log
 
   #    pretrain_pipeline:
 #      flags:
