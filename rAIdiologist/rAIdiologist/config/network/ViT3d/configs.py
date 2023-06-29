@@ -30,6 +30,8 @@ def get_3DReg_config():
     config.skip_channels = (32, 32, 32, 32, 16)
     config.n_dims = 3
     config.n_skip = 5
+    config.in_ch = 2
+    config.config_as_25d = False
     return config
 
 def get_3DImg2Pred_config():
@@ -41,7 +43,7 @@ def get_3DImg2Pred_config():
     config.transformer.mlp_dim = 3072
     config.transformer.num_heads = 12
     config.transformer.num_layers = 12
-    config.transformer.attention_dropout_rate = 0.0
+    config.transformer.attention_dropout_rate = 0.2
     config.transformer.dropout_rate = 0.1
     config.patch_size = 8
 
@@ -51,4 +53,6 @@ def get_3DImg2Pred_config():
     config.down_num = 2
     config.n_dims = 3
     config.n_skip = 5
+    config.in_ch = 1
+    config.config_as_25d = True
     return config
