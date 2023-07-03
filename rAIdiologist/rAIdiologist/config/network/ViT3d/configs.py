@@ -13,6 +13,7 @@ def get_3DReg_config():
     config = PMIBaseCFG()
     config.patches = PMIBaseCFG()
     config.patches.grid = (8, 8, 4)
+    config.patches.size = [8, 8, 4]
     config.hidden_size = 252
     config.transformer = PMIBaseCFG()
     config.transformer.mlp_dim = 3072
@@ -20,7 +21,6 @@ def get_3DReg_config():
     config.transformer.num_layers = 12
     config.transformer.attention_dropout_rate = 0.0
     config.transformer.dropout_rate = 0.1
-    config.patch_size = 8
 
     config.conv_first_channel = 512
     config.encoder_channels = (16, 32, 32)
@@ -32,27 +32,28 @@ def get_3DReg_config():
     config.n_skip = 5
     config.in_ch = 2
     config.config_as_25d = False
+    config.type='img2img'
     return config
 
 def get_3DImg2Pred_config():
     config = PMIBaseCFG()
     config.patches = PMIBaseCFG()
-    config.patches.grid = (8, 8, 4)
+    config.patches.grid = (1, 1, 25)
+    # config.patches.size = [32, 32, 4]
     config.hidden_size = 252
     config.transformer = PMIBaseCFG()
     config.transformer.mlp_dim = 3072
     config.transformer.num_heads = 12
     config.transformer.num_layers = 12
-    config.transformer.attention_dropout_rate = 0.2
+    config.transformer.attention_dropout_rate = 0.0
     config.transformer.dropout_rate = 0.1
-    config.patch_size = 8
 
     config.conv_first_channel = 512
-    config.encoder_channels = (16, 32, 32)
-    config.down_factor = 2
-    config.down_num = 2
+    config.encoder_channels = (64, 128, 256, 512, 512)
+    config.encoder_dropout_rate = 0.1
     config.n_dims = 3
     config.n_skip = 5
     config.in_ch = 1
     config.config_as_25d = True
+    config.type='img2pred'
     return config

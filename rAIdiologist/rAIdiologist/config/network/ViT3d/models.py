@@ -4,6 +4,10 @@ Modified by alabamagan, redistributed under the MIT License.
 
 Summary of modifications:
     * Add docstrings and comments
+    * Fix bug owing to `grid` option
+    * Implement 2.5d embedding that reduce the last dimension differently
+    * Implement 3D images to prediction network
+    * Implement RAN encoder
 
 """
 
@@ -20,6 +24,11 @@ import torch.nn.functional as nnf
 from torch.nn import Dropout, Softmax, Linear, Conv3d, LayerNorm
 from torch.nn.modules.utils import _pair, _triple
 from .configs import *
+from ..slicewise_ran import RAN_25D
+from pytorch_med_imaging.networks.layers import ResidualBlock3d, Conv3d as Conv3d_pmi
+from pytorch_med_imaging.networks.layers.StandardLayers3D import MaskedSequential3d
+from pytorch_med_imaging.networks.AttentionResidual import AttentionModule_25d
+from typing import Optional
 from torch.distributions.normal import Normal
 from einops import rearrange
 
@@ -70,28 +79,37 @@ class Attention(nn.Module):
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
-        return x.permute(0, 2, 1, 3)
+        return rearrange(x, 'b s h d -> b h s d')
 
     def forward(self, hidden_states):
+        # Apply query, key, and value linear layers
         mixed_query_layer = self.query(hidden_states)
         mixed_key_layer = self.key(hidden_states)
         mixed_value_layer = self.value(hidden_states)
 
+        # Reshape and permute query, key, and value layers for multi-head attention
         query_layer = self.transpose_for_scores(mixed_query_layer)
         key_layer = self.transpose_for_scores(mixed_key_layer)
         value_layer = self.transpose_for_scores(mixed_value_layer)
 
-        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+        # Compute attention scores as dot product between query and key layers
+        attention_scores = torch.matmul(query_layer, rearrange(key_layer, 'b h s d -> b h d s'))
+        # Scale attention scores
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+        # Compute attention probabilities using softmax
         attention_probs = self.softmax(attention_scores)
         weights = attention_probs if self.vis else None
+        # Apply dropout to attention probabilities
         attention_probs = self.attn_dropout(attention_probs)
 
+        # Compute context layer as dot product between attention probabilities and value layer
         context_layer = torch.matmul(attention_probs, value_layer)
-        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+        context_layer = rearrange(context_layer, 'b h s d -> b s h d').contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
+        # Apply output linear layer
         attention_output = self.out(context_layer)
+        # Apply dropout to attention output
         attention_output = self.proj_dropout(attention_output)
         return attention_output, weights
 
@@ -121,16 +139,16 @@ class Mlp(nn.Module):
         return x
 
 
-class Embeddings(nn.Module):
+class Embeddings_Img2Img(nn.Module):
     """Construct the embeddings from patch, position embeddings.
     """
     def __init__(self, config, img_size):
-        super(Embeddings, self).__init__()
+        super(Embeddings_Img2Img, self).__init__()
         self.config = config
         in_ch = config.in_ch
         down_25d = config.config_as_25d
         down_factor = config.down_factor
-        patch_size = _triple(config.patch_size)
+        patch_size = _triple(config.patches["size"])
 
         # Calculate the number of patches
         n_patches = int((img_size[0]/2**down_factor // patch_size[0]) * (img_size[1]/2**down_factor // patch_size[1]) *
@@ -172,6 +190,69 @@ class Embeddings(nn.Module):
         # Return embeddings and features
         return embeddings, features
 
+
+class Embeddings(nn.Module):
+    """Construct the embeddings from patch, position embeddings.
+    """
+    def __init__(self, config, img_size, in_channels=3):
+        super(Embeddings, self).__init__()
+        self.hybrid = None
+        img_size = _pair(img_size)
+        in_ch = config.in_ch
+        down_25d = config.config_as_25d
+        down_factor = 4 # RAN down factor
+
+        if hasattr(config.patches, "grid"):
+            # Determine patch size based on grid size
+            grid_size = _triple(config.patches["grid"])
+            if config.config_as_25d:
+                # for 2.5d, the slice dimension is not down sampled by Down25d
+                gz = img_size[2] // grid_size[2]
+            else:
+                gz = img_size[2] // grid_size[2] // 2 ** (down_factor + 1) # +1 from in-conv of RAN
+            patch_size = (img_size[0] // 2 ** (down_factor + 1) // grid_size[0],
+                          img_size[1] // 2 ** (down_factor + 1) // grid_size[1],
+                          gz)
+            if any([ps == 0 for ps in patch_size]):
+                msg = "Grid size setting error! Some dimensions are 0."
+                raise RuntimeError(msg)
+            n_patches = (grid_size[0] * grid_size[1] * img_size[2] // gz)
+            self.hybrid = True
+        else:
+            # Determine grid size based on patch size
+            patch_size = _triple(config.patches["size"])
+            n_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1]) * (img_size[2] // patch_size[2])
+            self.hybrid = False
+
+        if self.hybrid:
+            self.hybrid_model = RANEncoder(config, n_channels=in_ch)
+            in_ch = config['encoder_channels'][-1]
+        self.patch_embeddings = Conv3d(in_channels=in_ch,
+                                       out_channels=config.hidden_size,
+                                       kernel_size=patch_size,
+                                       stride=patch_size)
+        self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches+1, config.hidden_size))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, config.hidden_size))
+
+        self.dropout = Dropout(config.transformer["dropout_rate"])
+
+    def forward(self, x):
+        B = x.shape[0]
+         # classification token. i.e., output prediction is triggered by this zero token
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+
+        if self.hybrid:
+            x, _ = self.hybrid_model(x)
+        x = self.patch_embeddings(x)
+        x = x.flatten(2)
+        x = x.transpose(-1, -2)
+
+        # Classificaiton token is attached to the head
+        x = torch.cat((cls_tokens, x), dim=1)
+
+        embeddings = x + self.position_embeddings
+        embeddings = self.dropout(embeddings)
+        return embeddings, None # None is for catering `Transformer.forward()`
 
 class Block(nn.Module):
     def __init__(self, config, vis):
@@ -219,7 +300,16 @@ class Encoder(nn.Module):
 class Transformer(nn.Module):
     def __init__(self, config, img_size, vis):
         super(Transformer, self).__init__()
-        self.embeddings = Embeddings(config, img_size=img_size)
+        choice = ['img2img', 'img2pred']
+        if config.type == 'img2img':
+            embeddings = Embeddings_Img2Img
+        elif config.type == 'img2pred':
+            embeddings = Embeddings
+        else:
+            msg = f"Type must be one of {choice}. Got {config.type} instead."
+            raise AttributeError(msg)
+
+        self.embeddings = embeddings(config, img_size=img_size)
         self.encoder = Encoder(config, vis)
 
     def forward(self, input_ids):
@@ -327,7 +417,7 @@ class DecoderCup(nn.Module):
         decoder_channels = config.decoder_channels
         in_channels = [head_channels] + list(decoder_channels[:-1])
         out_channels = decoder_channels
-        self.patch_size = _triple(config.patch_size)
+        self.patch_size = _triple(config.patches["size"])
         skip_channels = self.config.skip_channels
         blocks = [
             DecoderBlock(in_ch, out_ch, sk_ch) for in_ch, out_ch, sk_ch in zip(in_channels, out_channels, skip_channels)
@@ -426,6 +516,7 @@ class Down(nn.Module):
     def forward(self, x):
         return self.maxpool_conv(x)
 
+
 class Down25d(nn.Module):
     """Downscaling with maxpool then double conv"""
 
@@ -469,8 +560,8 @@ class CNNEncoder(nn.Module):
                 Number of input channels. Defaults to 2.
         """
         super(CNNEncoder, self).__init__()
-        down25d = config.config_as_25d
-        down = Down if not down25d else Down25d
+        self.down25d = config.config_as_25d
+        down = Down if not self.down25d else Down25d
 
         self.n_channels = n_channels
         encoder_channels = config.encoder_channels
@@ -484,13 +575,13 @@ class CNNEncoder(nn.Module):
 
         Args:
             x (torch.Tensor):
-                Input tensor of shape (B, C, D, H, W), where
+                Input tensor of shape (B, C, H, W, D), where
                 B is the batch size, C is the number of channels, D is the depth,
                 H is the height, and W is the width.
 
         Returns:
             torch.Tensor:
-                Output tensor of shape (B, C_out, D, H, W),
+                Output tensor of shape (B, C_out, H, W, D),
                 where C_out is the number of output channels.
             List[torch.Tensor]:
                 List of hierarchical features generated by
@@ -510,6 +601,54 @@ class CNNEncoder(nn.Module):
             features.append(feats_down)
         return feats, features[::-1]
 
+
+class RANEncoder(nn.Module):
+    def __init__(self, config,
+                 n_channels=1,
+                 first_conv_ch: Optional[int] = 64):
+        super(RANEncoder, self).__init__()
+        if not config.config_as_25d:
+            raise AttributeError("This encoder only supports 25d operations")
+        self.n_channels = n_channels
+        dropout = config.encoder_dropout_rate
+        encoder_channels = config.encoder_channels
+
+        self.in_conv1  = Conv3d_pmi(n_channels,
+                                    encoder_channels[0],
+                                    kern_size = [7, 7, 3], stride = [2, 2, 1], padding = [3, 3, 1])
+        self.in_conv2  = ResidualBlock3d(encoder_channels[0]    , encoder_channels[1])
+        self.att1      = AttentionModule_25d(encoder_channels[1], encoder_channels[1], stage = 0)
+        self.r1        = ResidualBlock3d(encoder_channels[1]    , encoder_channels[2], p     = dropout / 8.)
+        self.att2      = AttentionModule_25d(encoder_channels[2], encoder_channels[2], stage = 1      )
+        self.r2        = ResidualBlock3d(encoder_channels[2]    , encoder_channels[3], p     = dropout / 4.)
+        self.att3      = AttentionModule_25d(encoder_channels[3], encoder_channels[3], stage = 2      )
+        self.out_conv  = ResidualBlock3d(encoder_channels[3]    , encoder_channels[4], p     = dropout / 2.)
+
+    def forward(self,
+                x: torch.Tensor):
+        r"""Expect input :math:`(B × in_{ch} × H × W × S)`, output (B × out_ch)
+
+        Args:
+            x (torch.Tensor):
+                This should be a float tensor input with shape :math:`(B × in_{ch} × H × W × S)`.
+
+        """
+        B = x.shape[0]
+        while x.dim() < 5:
+            x = x.unsqueeze(0)
+        x = self.in_conv1(x)
+
+        x = nnf.max_pool3d(x, [2, 2, 1], stride=[2, 2, 1])
+
+        # Resume dimension
+        x = self.in_conv2(x)
+        x = self.att1(x)
+        x = self.r1(x)
+        x = self.att2(x)
+        x = self.r2(x)
+        x = self.att3(x)
+        x = self.out_conv(x)
+        return x, None
 
 class RegistrationHead(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3, upsampling=1):
