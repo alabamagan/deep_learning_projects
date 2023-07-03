@@ -6,6 +6,7 @@ sys.path.append(str(Path('').absolute().parent))
 from rAIdiologist.config.network.rAIdiologist import *
 from rAIdiologist.config.network.slicewise_ran import *
 from rAIdiologist.config.network.old.old_swran import SlicewiseAttentionRAN_old
+from rAIdiologist.config.network.ViT3d.models import ViTVNetImg2Pred, CONFIGS
 from rAIdiologist.config.rAIdiologistCFG import *
 from rAIdiologist.solvers import *
 import unittest
@@ -47,6 +48,11 @@ class Test3DNetworks(unittest.TestCase):
         with torch.no_grad():
             out = self.net(self.sample_input)
             print(out.shape)
+            try:
+                # Try to print the summary for convenience
+                summary(self.net, self.sample_input, print_summary=True, max_depth=2)
+            except:
+                pass
             self.expect_dim(out, self.EXPECTED_DIM)
 
     def test_input_bsize_1(self):
@@ -94,6 +100,20 @@ class TestRAN25D(Test3DNetworks):
     def setUp(self) -> None:
         super(TestRAN25D, self).setUp()
         self.net = RAN_25D(1, 1).cuda()
+
+
+class TestSWRAN(Test3DNetworks):
+    def setUp(self) -> None:
+        super(TestSWRAN, self).setUp()
+        self.net = SlicewiseAttentionRAN(1, 1).cuda()
+
+class TestViT(Test3DNetworks):
+    def setUp(self) -> None:
+        super(TestViT, self).setUp()
+        config = CONFIGS['ViT3d-Img2Pred']
+        config.patches.grid = (1, 1, 30)
+        self.net = ViTVNetImg2Pred(config, num_classes=1, img_size=(128, 128, 30)).cuda()
+
 
 class TestRAIController(unittest.TestCase):
     @classmethod
