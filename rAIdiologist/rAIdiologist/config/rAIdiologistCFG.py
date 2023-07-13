@@ -18,12 +18,12 @@ data_loader = PMIImageFeaturePairLoaderCFG(
     input_dir     = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/01.NyulNormalized/',
     probmap_dir   = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/00.HuangMask/',
     target_dir    = './NPC_Segmentation/99.Testing/NPC_Screening/v1/Datasheet_v2.csv',
-    augmentation  = './v2_rAIdiologist_transform.yaml',
+    augmentation  = './rAIdiologist_transform_train.yaml',
     target_column = 'is_malignant',
     id_globber    = "^[a-zA-Z]{0,3}[0-9]+",
     sampler       = 'weighted', # Unset sampler to load the whole image
     sampler_kwargs    = dict(
-        patch_size = [325, 325, 25]
+        patch_size = [320, 320, 25]
     ),
     tio_queue_kwargs = dict(            # dict passed to ``tio.Queue``
         max_length             = 40,
@@ -41,7 +41,7 @@ data_loader_inf = PMIImageFeaturePairLoaderCFG(
     input_dir     = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/01.NyulNormalized/',
     probmap_dir   = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/00.HuangMask/',
     target_dir    = './NPC_Segmentation/99.Testing/NPC_Screening/v1/Datasheet_v2.csv',
-    augmentation  = './v1_rAIdiologist_transform.yaml',
+    augmentation  = './rAIdiologist_transform_inf.yaml',
     target_column = 'is_malignant',
     id_globber    = "^[a-zA-Z]{0,3}[0-9]+",
     tio_queue_kwargs = dict(            # dict passed to ``tio.Queue``
@@ -60,6 +60,7 @@ class MySolverCFG(rAIdiologistSolverCFG):
     net           = rAIdiologist(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2)
     rAI_run_mode  = 1
     optimizer     = 'Adam'
+    # init_mom      = 0.95
     init_lr       = 1E-4
     batch_size    = 8
     num_of_epochs = 200
@@ -70,17 +71,19 @@ class MySolverCFG(rAIdiologistSolverCFG):
 
     plot_to_tb        = True
     early_stop        = 'loss_reference'
-    early_stop_kwargs = {'warmup'       : 80, 'patience': 15}
-    accumulate_grad   = 0
+    early_stop_kwargs = {'warmup'       : 150, 'patience': 15}
+    accumulate_grad   = 4
 
-    lr_sche = 'ExponentialLR'
-    lr_sche_args = [0.99]
+    # lr_sche = 'ExponentialLR'
+    # lr_sche_args = [0.99]
     # lr_sche = 'OneCycleLR'
     # lr_sche_args = "[]"
     # lr_sche_kwargs = "{'max_lr':1E-3,'total_steps':50,'cycle_momentum':True}"
+    # lr_sche = 'CosineAnnealingWarmRestarts'
+    # lr_sche_kwargs = "{'T_0': 10, 'T_mult': 2, 'eta_min': 0"
     rAI_inf_save_playbacks = True
 
-    loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([1.4]),
+    loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([1.2]),
                                       conf_factor=1.5,
                                       conf_pos_weight=0.1)
 

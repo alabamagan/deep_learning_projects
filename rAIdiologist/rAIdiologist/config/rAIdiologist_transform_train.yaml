@@ -1,4 +1,4 @@
-# For inference, all images should have at least 25 slices, otherwise, inference will include empty slices.
+# For training, patches of [325, 325, 25] is further sampled from the output normalized by this yaml file
 
 ToCanonical:
   {}
@@ -6,13 +6,13 @@ Resample:
   - 'input'
 RandomAffine:
   scales: [0.9, 1.1]
-  degrees: [0, 0, 10]
+  degrees: [0, 0, 15]
 RandomFlip:
   - 'lr'
 RandomNoise:
-  std: [0, 8]
+  std: [5, 15]
 CropOrPad:
-  - [325, 325, 25]
+  - [350, 350, 30]
   - padding_mode: 0
   - mask_name: "probmap"
 
