@@ -236,7 +236,7 @@ class Embeddings(nn.Module):
             if config.config_as_25d:
                 # for 2.5d, the slice dimension is not down sampled by Down25d
                 gz = img_size[2] // grid_size[2]
-                grid_size[2] = img_size[2]
+                grid_size[2] = img_size[2] // gz
             else:
                 gz = img_size[2] // grid_size[2] // 2 ** (down_factor + 1) # +1 from in-conv of RAN
             patch_size = (img_size[0] // 2 ** (down_factor + 1) // grid_size[0],
@@ -264,42 +264,27 @@ class Embeddings(nn.Module):
         #                                kernel_size=patch_size,
         #                                stride=patch_size)
         self.patch_embeddings = nn.Sequential(
-            Rearrange('b c (h p1) (w p2) (z p3) -> b (z h w) (p1 p2 p3 c)',
+            Rearrange('b c (h p1) (w p2) (z p3) -> b (z h w) (p3 p1 p2 c)',
                       p1 = patch_size[0], p2 = patch_size[1], p3 = patch_size[2]),
             nn.LayerNorm(in_ch * patch_size[0] * patch_size[1] * patch_size[2]),
             nn.Linear(in_ch * patch_size[0] * patch_size[1] * patch_size[2], config.hidden_size)
         )
         # position embedding should also include the cls_token and sep_tokens
-        self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches + 1 + img_size[2], config.hidden_size))
+        self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches + 1 , config.hidden_size))
         self.cls_token = nn.Parameter(torch.zeros(1, 1, config.hidden_size))
 
         # This token separates the embedded patches from different slices.
-        self.slice_sep_token = nn.Parameter(torch.zeros(1, 1, config.hidden_size, 1))
-        self.slice_reshape = Rearrange('b (z h w) c -> b (h w) c z',
-                                       h = grid_size[0], w = grid_size[1], z = grid_size[2])
-        self.slice_reshape_inverse = Rearrange('b (hw) c z -> b (z hw) c',
-                                               hw = grid_size[0] * grid_size[1] + 1,
-                                               c = config.hidden_size)
-
         self.dropout = Dropout(config.transformer["dropout_rate"])
 
 
     def forward(self, x):
         B = x.shape[0]
-        D = x.shape[-1] # number of z slices
          # classification token. i.e., output prediction is triggered by this zero token
         cls_tokens = self.cls_token.expand(B, -1, -1)
 
         if self.hybrid:
             x, _ = self.hybrid_model(x)
         x = self.patch_embeddings(x)
-        # x = x.flatten(2)
-        # x = x.transpose(-1, -2)
-
-        # Slice sep token is attached to after each slice
-        x = self.slice_reshape(x)
-        x = torch.cat([x, self.slice_sep_token.expand(B, -1, -1, D)], dim=1)
-        x = self.slice_reshape_inverse(x)
 
         # Classificaiton token is attached to the head
         x = torch.cat((cls_tokens, x), dim=1)
@@ -785,16 +770,4 @@ CONFIGS = {
     'ViT3d-V-Net': get_3DReg_config(),
     'ViT3d-Img2Pred': get_3DImg2Pred_config()
 }
-
-if __name__ == '__main__':
-    import torch
-    import pytorch_model_summary
-    with torch.no_grad():
-        net = ViTVNetImg2Pred(CONFIGS['ViT3d-Img2Pred'], img_size=(320, 320, 32), num_classes=1)
-        net = net.cuda()
-        pytorch_model_summary.summary(net, torch.rand(1, 1, 320, 320, 32).cuda(),
-                                      show_input=True,
-                                      show_parent_layers=True,
-                                      max_depth=3,
-                                      print_summary=True)
 
