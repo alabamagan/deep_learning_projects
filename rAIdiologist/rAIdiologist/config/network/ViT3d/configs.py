@@ -50,7 +50,7 @@ def get_3DImg2Pred_config():
 
     config.conv_first_channel = 512
     config.encoder_channels = (64, 128, 256, 512, 1024)
-    config.encoder_dropout_rate = 0.1
+    config.encoder_dropout_rate = 0.15
     config.n_dims = 3
     config.n_skip = 5
     config.in_ch = 1

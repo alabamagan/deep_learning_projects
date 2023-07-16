@@ -3,7 +3,7 @@ from typing import Optional, Union
 import torch
 from einops import rearrange, repeat
 from torch import nn as nn
-from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_sequence
 
 from pytorch_med_imaging.networks.layers import PositionalEncoding, NormLayers
 
@@ -115,13 +115,8 @@ class LSTM_rater(nn.Module):
             # s: (S x C) -> (S x sum_slices x C) -> ss: (S - [sum_slice - 1] x sum_slice x C)
             ss = torch.stack([torch.roll(s, -j, 0) for j in range(self._sum_slices)], dim=1)
             ss = rearrange(ss, 'b s c -> b (s c)')[:-self._sum_slices + 1]
-            fc_out = self.out_fc(ss) # risk_curve: (S - [sum_slice - 1] x out_ch)
-            risk_curve = fc_out[..., :-1].view(-1, self._out_ch - 1)
-            conf_curve = torch.sigmoid(fc_out[..., -1].view(-1, 1)).cumsum(dim=0)
-            conf_curve /= conf_curve.shape[0] # normalize by number of slice
-            risk_curve = (risk_curve * conf_curve.expand_as(risk_curve)).view(-1, 1).cumsum(dim=0)
-            risk_curve = torch.cat([risk_curve, conf_curve], dim=1)
-            o.append(risk_curve[-1])
+            risk_curve = self.out_fc(ss) # risk_curve: (S - [sum_slice - 1] x out_ch)
+            o.append(risk_curve)
             if self._RECORD_ON and not self.training:
                 # Index of input already starts from 1, and sum_slice takes also extra slices.
                 risk_curve_index = torch.arange(len(risk_curve)) + (self._sum_slices - 1) // 2 + 1
@@ -129,10 +124,10 @@ class LSTM_rater(nn.Module):
                                         risk_curve_index.view(-1, 1),       # index of representing slice
                                         torch.zeros(len(risk_curve)).view(-1, 1)], dim=1)
                 self.play_back.append(lstm_pb)
-        o = torch.stack(o, dim=0)
-        # last_slices = torch.stack([o[-self._sum_slices:].flatten() for o in unpacked_o])
-        # o = self.out_fc(self.dropout(last_slices)) # _h: (L x B x C), o: (B x C_out)
-        return o # no need to deal with up or down afterwards
+
+        self.current_seq_len = [s.shape[0] for s in o]
+        o = pad_sequence(o, batch_first=True) # note that this lead to trailing zeros
+        return o
 
     def clean_playback(self) -> None:
         self.play_back.clear()

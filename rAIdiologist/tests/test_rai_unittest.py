@@ -50,7 +50,7 @@ class Test3DNetworks(unittest.TestCase):
             print(out.shape)
             try:
                 # Try to print the summary for convenience
-                summary(self.net, self.sample_input, print_summary=True, max_depth=2)
+                summary(self.net, self.sample_input, show_input=True, print_summary=True, max_depth=2)
             except:
                 pass
             self.expect_dim(out, self.EXPECTED_DIM)
@@ -111,8 +111,9 @@ class TestViT(Test3DNetworks):
     def setUp(self) -> None:
         super(TestViT, self).setUp()
         config = CONFIGS['ViT3d-Img2Pred']
-        config.patches.grid = (1, 1, 30)
-        self.net = ViTVNetImg2Pred(config, num_classes=1, img_size=(128, 128, 30)).cuda()
+        config.patches.grid = (4, 4, 5)
+        self.sample_input = torch.rand(4, 1, 320, 320, 25).cuda()
+        self.net = ViTVNetImg2Pred(config, num_classes=1, img_size=(320, 320, 25)).cuda()
 
 
 class TestRAIController(unittest.TestCase):
@@ -130,7 +131,7 @@ class TestRAIController(unittest.TestCase):
     def __init__(self, *args,**kwargs):
         super().__init__(*args, **kwargs)
         cfg = MyControllerCFG()
-        cfg.data_loader_val_cfg.augmentation = '../rAIdiologist/config/v1_rAIdiologist_transform.yaml'
+        cfg.data_loader_val_cfg.augmentation = '../rAIdiologist/config/rAIdiologist_transform_inf.yaml'
         self.controller = PMIController(cfg)
         pass
 

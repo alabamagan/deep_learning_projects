@@ -3,10 +3,12 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_sequence
 import copy
 from .lstm_rater import LSTM_rater
 from .slicewise_ran import SlicewiseAttentionRAN, RAN_25D
 from .old.old_swran import SlicewiseAttentionRAN_old
+from .ViT3d.models import ViTVNetImg2Pred, CONFIGS
 from mnts.mnts_logger import MNTSLogger
 import types
 
@@ -39,7 +41,7 @@ class rAIdiologist(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
         # LSTM for
-        self.lstm_rater = custom_rnn or LSTM_rater(2048, out_ch=out_ch + 1, embed_ch=256, record=record,
+        self.lstm_rater = custom_rnn or LSTM_rater(2048, out_ch=out_ch, embed_ch=128, record=record,
                                                    iter_limit=iter_limit, dropout=lstm_dropout, bidirectional=False,
                                                    sum_slices=3
                                                    )
@@ -81,7 +83,7 @@ class rAIdiologist(nn.Module):
         if mode == 0:
             self.requires_grad_(False)
             self.cnn.requires_grad_(True)
-
+            self.cnn.return_top = False
             # This should not have any grad but set it anyways
             self.lstm_rater.eval()
         elif mode in (1, 3):
@@ -143,6 +145,7 @@ class rAIdiologist(nn.Module):
 
     def forward_(self, x):
         # input is x: (B x 1 x H x W x S) seg: (B x 1 x H x W x S)
+        B = x.shape[0]
         while x.dim() < 5:
             x = x.unsqueeze(0)
         nonzero_slices, top_slices = RAN_25D.get_nonzero_slices(x.detach().cpu())
@@ -157,9 +160,9 @@ class rAIdiologist(nn.Module):
             x_play_back = x.detach()
         x = x.permute(0, 2, 1).contiguous() # (B x C x S) -> (B x S x C)
 
-        # o: (B x S x out_ch + 1), lstm output dense layer will also decide its confidence
+        # o: (B x S x [out_ch + 1]), lstm output dense layer will also decide its confidence
         o = self.lstm_rater(x[:, 1:], # discard the first and last slice
-                            torch.as_tensor(top_slices).int() - 1).contiguous() # -1 discard the last slice
+                            torch.as_tensor(top_slices).int() - 1) # -1 discard the last slice
 
         if self.RECORD_ON and not self.training:
             # If record on, extract playback from lstm_rater and clean the playback for each mini-batch
@@ -179,51 +182,17 @@ class rAIdiologist(nn.Module):
             self.play_back.extend(pb)
             self.lstm_rater.clean_playback()
 
-        if self._mode == 4:
-            # if we train with both CNN and LSTM prediction together, the LSTM prediction is compressed to zero
-            # very quickly, so, we train the LSTM first
-            o = o[:,0]
-            o = o.view(-1, 1)
-        if self._mode == 1:
-            # Just return the lstm results, loss function will be BCE
-            o0 = o[:,0]
-            o = torch.concat([o0.view(-1, self._out_ch),            # Overall Prediction
-                              reduced_x.view(-1, 1),                # CNN_Prediction
-                              torch.narrow(o, 1, 1, 1),             # Adaptive weight
-                              torch.narrow(o, 1, 0, 1)], dim=1      # LSTM prediction
-                             )
-            o = o.view(-1, self._out_ch + 3)
-        elif self._mode in (3, 5):
-            # then, also train the LSTM to predict if the CNN prediction make sense
-            weights = 0.6 * torch.sigmoid(o[:, 1]).view(-1, 1) + 0.2 # restrict the range to 0.2 - 0.8
-            # o0 = torch.concat([o.view(-1, self._out_ch), reduced_x.view(-1, self._out_ch)], dim=1)
-            o0 = o[:, 0].view(-1, 1) * weights + reduced_x.view(-1, 1) * 0.5
-            o = torch.concat([o0.view(-1, self._out_ch),            # Overall Prediction
-                              reduced_x.view(-1, 1),                # CNN_Prediction
-                              torch.narrow(o, 1, 1, 1),             # Adaptive weight
-                              torch.narrow(o, 1, 0, 1)], dim=1      # LSTM prediction
-                             )
-            o = o.view(-1, self._out_ch + 3)
-        return o
-
-    @staticmethod
-    def generate_mask_tensor(x):
-        r"""Generates :class:`torch.MaskedTensor` that masks the zero padded slice.
-
-        Args:
-            x (torch.Tensor):
-                Tensor input with size :math:`(B × C × H × W × S)`. The zero padding should be done for the :math:`S`
-                dimension.
-
-        Returns:
-            torch.MaskedTensor: Tensor with size :math:`(B × S)`.
-
-        """
-        nonzero_slices, _ = RAN_25D.get_nonzero_slices(x)
-        mask = torch.zeros([x.shape[0], x.shape[1]], dtype=torch.BoolType)
-        for i, (bot_slice, top_slice) in nonzero_slices.items():
-            mask[i, bot_slice:top_slice + 1].fill_(True)
-        return torch.Masked
+        # if self.training:
+        if False:
+            return o.view(B, -1, self._out_ch)
+        else:
+            seq_len = self.lstm_rater.current_seq_len
+            out = torch.stack([oo[-1] for oo in unpack_sequence(
+                pack_padded_sequence(o, seq_len, batch_first=True, enforce_sorted=False)
+            )]).view(B, self._out_ch)
+            if any(torch.isclose(out, torch.zeros_like(out).float())):
+                raise ValueError("Detect output is padded.")
+            return out
 
     def forward_cnn(self, *args):
         if len(args) > 0: # restrict input to only a single image
@@ -242,8 +211,28 @@ def create_rAIdiologist_v1():
     return rAIdiologist(1, 1, dropout=0.1, lstm_dropout=0.1)
 
 def create_rAIdiologist_v2():
-    cnn = RAN_25D(1, 2, dropout=0.05)
-    return rAIdiologist(1, 1, dropout=0.1, lstm_dropout=0.1, custom_cnn=cnn)
+    cnn = RAN_25D(1, 1, dropout=0.35)
+    return rAIdiologist(1, 1, lstm_dropout=0.1, custom_cnn=cnn)
+
+def create_rAIdiologist_v3():
+    cnn = SlicewiseAttentionRAN(1, 1, dropout=0.35)
+    return rAIdiologist(1, 1, lstm_dropout=0.1, custom_cnn=cnn)
+
+def create_rAIdiologist_v4():
+    cnn = ViTVNetImg2Pred(CONFIGS['ViT3d-Img2Pred'], num_classes=1, img_size=(320, 320, 25))
+    return rAIdiologist(1, 1, lstm_dropout=0.1, custom_cnn=cnn)
+
+def create_rAIdiologist_v41():
+    config = CONFIGS['ViT3d-Img2Pred']
+    config.patches.grid = (4, 4, 25)
+    cnn = ViTVNetImg2Pred(config, num_classes=1, img_size=(320, 320, 25))
+    return rAIdiologist(1, 1, lstm_dropout=0.1, custom_cnn=cnn)
+
+def create_rAIdiologist_v42():
+    config = CONFIGS['ViT3d-Img2Pred']
+    config.patches.grid = (20, 20, 5)
+    cnn = ViTVNetImg2Pred(config, num_classes=1, img_size=(320, 320, 25))
+    return rAIdiologist(1, 1, lstm_dropout=0.1, custom_cnn=cnn)
 
 def create_old_rAI():
     cnn = SlicewiseAttentionRAN_old(1, 1, exclude_fc=False, return_top=False)

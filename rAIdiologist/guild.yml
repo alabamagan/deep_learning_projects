@@ -110,13 +110,13 @@
           target-type: 'link'
         - copy-checkpoint-pretrain
 
-  #    pretrain_pipeline:
+#      pretrain_pipeline:
 #      flags:
 #        net_name: 'rai_v1'
 #        debug_mode: no
 #      steps:
-#        - run: train controller_cfg.net_name=${net_name} controller_cfg.debug_mode=${debug_mode}
-#        - run: validation
+#        - run: pretrain controller_cfg.net_name=${net_name} controller_cfg.debug_mode=${debug_mode}
+#        - run: pretrain-validation
 
   sourcecode:
     root: ./

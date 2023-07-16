@@ -64,6 +64,8 @@ class rAIdiologistSolver(BinaryClassificationSolver):
 
         # Turn off record
         self.get_net()._RECORD_ON = False
+        self._validation_misclassification_record = {} # Doesn't know why sometimes this is not inherited from
+                                                       # BinaryClassificationSolver
 
     def prepare_lossfunction(self):
         if not self.rAI_classification:
@@ -76,10 +78,12 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         the prediction, the second element is the confidence and the third is irrelevant and only used
         by the network. In mode 0, the output shape is (B x 1)"""
 
-        # res: (B x C)/(B x 1), g: (B x 1)
+        # res: (B x S x C)/(B x S x 1)/B x (S x C), g: (B x 1)
         g = g.detach().cpu()
         res = res.detach().cpu()
         chan = res.shape[-1] # if chan > 1, there is a value for confidence
+        if res.dim() == 3:
+            res = res[:, -1]
         _data =np.concatenate([res.view(-1, chan).data.numpy(), g.data.view(-1, 1).numpy()], axis=-1)
         _df = pd.DataFrame(data=_data, columns=['res_%i'%i for i in range(chan)] + ['g'])
         _df['Verify_wo_conf'] = (_df['res_0'] >= 0) == (_df['g'] > 0)
@@ -114,9 +118,10 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         return _df, dic.view(-1, 1)
 
     def _align_g_res_size(self, g, res):
-        # g: (B x 1), res is not important here
-
+        # g: (B x 1), res is either (B x S x C)) or (B x C)
         g = g.squeeze()
+        if res.dim() == 1:
+            res = res.view(-1, 1)
         return g.view(-1, 1), res
 
     def _epoch_prehook(self, *args, **kwargs):
@@ -135,8 +140,9 @@ class rAIdiologistSolver(BinaryClassificationSolver):
 
         # If new mode is needed, change mode
         if not current_mode == self._current_mode:
-            self._logger.info(f"Setting rAIdiologist mode to {current_mode}")
-            self._set_net_mode(current_mode)
+            if isinstance(self.get_net(), rAIdiologist):
+                self._logger.info(f"Setting rAIdiologist mode to {current_mode}")
+                self._set_net_mode(current_mode)
 
     def _set_net_mode(self, mode):
         try:
@@ -169,7 +175,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         store_dict = self.perfs[0]
         g, res = self._align_g_res_size(g, res)
         _df, dic = self._build_validation_df(g, res)
-
+        self._update_misclassification_record(dic, g, uids)
         # Decision were made by checking whether value is > 0.5 after sigmoid
         store_dict['dics'].extend(dic)
         store_dict['gts'].extend(g)

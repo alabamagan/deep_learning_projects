@@ -132,7 +132,7 @@ class SlicewiseAttentionRAN_old(nn.Module):
             return x
 
     def get_mask(self):
-        #[[B,H,W,D],[B,H,W,D],[B,H,W,]]
+        #[[B,H,W,D],[B,H,W,D],[B,H,W]]
         return [r.get_mask() for r in [self.att1, self.att2, self.att3]]
 
     def get_slice_attention(self):

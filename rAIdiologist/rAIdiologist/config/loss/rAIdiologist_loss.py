@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+from torch.nn.utils.rnn import *
+from pytorch_med_imaging.loss import BinaryFocalLoss
 import os
 import pprint
 
@@ -10,11 +12,6 @@ class ConfidenceBCELoss(nn.Module):
     .. notes::
         The loss function is defined as follows:
 
-
-        where :math:`N` is the batch size, :math:`x_i` and :math:`y_i` are the predicted probability and the ground truth label
-        for the i-th sample, :math:`c_i` is the predicted confidence score for the i-th sample, and :math:`t_i` is the target
-        confidence score for the i-th sample. :math:`\sigma(\cdot)` denotes the sigmoid function, and :math:`\mathrm{clip}(\cdot)`
-            is a function that clips its input values to be within a specified range.
     """
     def __init__(self, *args, conf_factor=0.3, conf_pos_weight=1, **kwargs):
         r"""Assumes input from model have already passed through sigmoid"""
@@ -24,45 +21,40 @@ class ConfidenceBCELoss(nn.Module):
                                               pos_weight=torch.FloatTensor([conf_pos_weight]))
 
         self.register_buffer('_epsilon', torch.DoubleTensor([1E-20]))
-        self.register_buffer('_gamma', torch.DoubleTensor([float(os.environ.get('loss_gamma', 0.3))]))
-        self.register_buffer('_sigma', torch.DoubleTensor([float(os.environ.get('loss_sigma', 5))]))
+        # Number of slices before the decision becomes important
+        self.register_buffer('_delay', torch.DoubleTensor([5.]))
+        self.register_buffer('_sigma', torch.DoubleTensor([2.]))
 
     def forward(self,
-                input: torch.DoubleTensor,
+                input: PackedSequence,
                 target: torch.DoubleTensor):
         # Typical classification loss for first dimension
-        overall_prediction = input[..., 0]
-        loss_classification = self.base_loss.forward(overall_prediction.flatten(), target.flatten())
-        # loss_classification = torch.clamp(loss_classification, 0, 10).mean()
+        batch_size = len(input)
+        if input.dim() == 3:
+            # Create a weight that has the same weight as slice-wise prediction
+            losses = []
+            for pred, tar in zip(input, target):
+                # detect trailing zeros
+                last = -1
+                while pred[last] == 0:
+                    last -= 1
+                pred = pred[:last]
+                loss_classification = self.base_loss.forward(pred, tar.expand_as(pred))
+                weight = torch.arange(loss_classification.shape[0]).view_as(loss_classification).\
+                    to(loss_classification.device)
+                # Morph this weight into a sigmoid that rises to 0.5 at the `self._delay`-th slice
+                weight = torch.sigmoid((weight - self._delay))
 
-        if input.shape[-1] >= 2:
-            cnn_pred  = input[..., 1].view(-1, 1)
-            weight    = input[..., 2].view(-1, 1) # this is already sigmoided
-            lstm_pred = input[..., 3].view(-1, 1)
-
-            regularizer = - self._gamma * torch.log(weight)
-            overall_loss = loss_classification.flatten()
-            lstm_loss = self.base_loss.forward(lstm_pred.flatten(), target.flatten())
-            cnn_loss = self.base_loss.forward(cnn_pred.flatten(), target.flatten())
-
-            torch.set_printoptions(precision=4, sci_mode=False)
-            msg = pprint.pformat({
-                'Overall loss': overall_loss.view(-1, 1).detach().cpu(),
-                'lstm_loss': lstm_loss.view(-1, 1).detach().cpu(),
-                'cnn_loss': cnn_loss.view(-1, 1).detach().cpu(),
-                'reg': regularizer.view(-1, 1).detach().cpu()
-            }, width=120)
-
-            if input.requires_grad:
-                loss = (overall_loss.flatten() + lstm_loss.flatten() * weight.flatten()) /2. + regularizer.flatten()
-                loss = loss.mean()
-            else:
-                # if input does not require gradient, assume it is in validation mode. Save checkpoint with best
-                # performance and ignore regularizer
-                loss = overall_loss
-                loss = loss.mean()
+                if pred.requires_grad:
+                    single_loss = (loss_classification.flatten() * weight.flatten()).sum() / weight.sum()
+                else:
+                    # if input does not require gradient, assume it is in validation mode. Save checkpoint with best
+                    # performance and ignore regularizer
+                    single_loss = loss_classification[-3]
+                losses.append(single_loss)
+            loss = torch.stack(losses).mean()
         else:
-            loss = loss_classification.mean()
+            loss = self.base_loss.forward(input.flatten(), target.flatten()).mean()
         return loss
 
     @property

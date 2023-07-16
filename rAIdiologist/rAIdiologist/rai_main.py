@@ -9,8 +9,13 @@ from pytorch_med_imaging.controller import PMIController, PMIControllerCFG
 global rai_options
 rai_options = {
     'networks': {
-        'rai_v1': create_rAIdiologist_v1(),
-        'rai_old': create_old_rAI(),
+        'rai_v1'      : create_rAIdiologist_v1(),
+        'rai_v2'      : create_rAIdiologist_v2(),
+        'rai_v3'      : create_rAIdiologist_v3(),
+        'rai_v4'      : create_rAIdiologist_v4(),
+        'rai_v41'     : create_rAIdiologist_v41(), # with grided ViT
+        'rai_v42'     : create_rAIdiologist_v42(), # with grided ViT
+        'rai_old'     : create_old_rAI(),
         'rai_old_mean': create_old_rAI_rmean(),
         'mean_swran': SlicewiseAttentionRAN_old(1, 1, reduce_by_mean=True),
         'maxvit': MaxViT(1, 1, 64, (2, 2, 5, 2), window_size=5),

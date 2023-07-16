@@ -13,7 +13,7 @@ class rAIController(PMIController):
         super(rAIController, self).override_cfg(override_file)
         #
         # if self.solver_cfg.rAI_fixed_mode >= 0:
-        #     self.data_loader_cfg.augmentation = './v1_rAIdiologist_transform.yaml'
+        #     self.data_loader_cfg.augmentation = './rAIdiologist_transform_inf.yaml'
         #     self.data_loader_cfg.sampler = None
         #     self.data_loader_cfg.sampler_kwargs = None
 
