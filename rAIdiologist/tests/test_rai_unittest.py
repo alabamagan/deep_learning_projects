@@ -113,6 +113,7 @@ class TestViT(Test3DNetworks):
         config = CONFIGS['ViT3d-Img2Pred']
         config.patches.grid = (4, 4, 5)
         self.sample_input = torch.rand(4, 1, 320, 320, 25).cuda()
+        self.sample_input_size1 = torch.rand(1, 1, 320, 320, 25).cuda()
         self.net = ViTVNetImg2Pred(config, num_classes=1, img_size=(320, 320, 25)).cuda()
 
 
@@ -120,7 +121,7 @@ class TestRAIController(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls._logger = MNTSLogger('.', logger_name='unittest', log_level='debug', keep_file=False, verbose=True)
-        MNTSLogger.set_log_level('debug')
+        MNTSLogger.set_global_log_level('debug')
 
     def setUp(self) -> None:
         super(TestRAIController, self).setUp()
