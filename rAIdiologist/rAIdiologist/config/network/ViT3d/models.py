@@ -169,7 +169,7 @@ class Embeddings_Img2Img(nn.Module):
         self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches, config.hidden_size))
 
         # Initialize dropout layer
-        self.dropout = Dropout(config.transformer["dropout_rate"])
+        self.dropout = Dropout(config.transformer.dropout_rate)
 
     def forward(self, x):
         # Get CNN features
@@ -662,6 +662,8 @@ class RANEncoder(nn.Module):
         self.r2        = ResidualBlock3d(encoder_channels[2]    , encoder_channels[3], p     = dropout / 1.)
         self.att3      = AttentionModule_25d(encoder_channels[3], encoder_channels[3], stage = 2      )
         self.out_conv  = ResidualBlock3d(encoder_channels[3]    , encoder_channels[4], p     = dropout)
+        self.out_res   = nn.Sequential(*[ResidualBlock3d(encoder_channels[4], encoder_channels[4], p = dropout)
+                                         for i in range(2)])
 
     def forward(self,
                 x: torch.Tensor):
@@ -687,6 +689,7 @@ class RANEncoder(nn.Module):
         x = self.r2(x)
         x = self.att3(x)
         x = self.out_conv(x)
+        x = self.out_res(x)
         return x, None
 
 class RegistrationHead(nn.Sequential):
