@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_med_imaging.networks.UNet import UNet, down, up
+import torchio as tio
 
 class UNetLocTexHistDeeper(UNet):
     def __init__(self, *args, **kwargs):
@@ -74,3 +75,7 @@ class UNetLocTexHistDeeper(UNet):
         x = self.up4(x, x1)
         x = self.outc(x)
         return x
+
+    def _forward(self, subject: tio.Subject):
+
+        pass

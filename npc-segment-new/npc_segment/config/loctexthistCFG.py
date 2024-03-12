@@ -12,7 +12,7 @@ import torch.nn as nn
 from multiprocessing import Semaphore
 
 # define a worker function for tio.CallBackQueue
-sem = Semaphore(256)
+sem = Semaphore(8)
 def work_funct(*args, **kwargs):
     with sem:
         o = loc_text_hist(*args, **kwargs)
@@ -24,8 +24,8 @@ data_loader_shared_kwargs = dict(
     input_dir = '',
     probmap_dir = '',
     target_dir = '',
-    augmentation = '',
-    id_globber = "^[a-zA-Z]+[0-9]+",
+    augmentation = './assets/augmentation.yaml',
+    id_globber = "^[a-zA-Z]{0,5}[0-9]+",
     sampler = 'weighted',
     sampler_kwargs = dict (
         patch_size = (128, 128, 1),
@@ -36,7 +36,7 @@ data_loader_train = PMIImageDataLoaderCFG(
     tio_queue_kwargs = dict(            # dict passed to ``tio.Queue``
         max_length             = 1500,
         samples_per_volume     = 50,
-        num_workers            = 1,
+        num_workers            = 8,
         shuffle_subjects       = True,
         shuffle_patches        = True,
         start_background       = True,
@@ -45,20 +45,22 @@ data_loader_train = PMIImageDataLoaderCFG(
     patch_sampling_callback = work_funct,
     create_new_attribute = 'feature',
     patch_sampling_callback_kwargs = {'nbins': 128, 'include': 'input'},
+    inf_samples_per_vol = 550,
     **data_loader_shared_kwargs
 )
 
 data_loader_inf = PMIImageDataLoaderCFG(
     tio_queue_kwargs = dict(            # dict passed to ``tio.Queue``
-        max_length             = 1100,
+        max_length             = 550,
         samples_per_volume     = 550,
-        num_workers            = 1,
+        num_workers            = 8,
         shuffle_subjects       = False,
         shuffle_patches        = False,
         start_background       = True,
         verbose                = True,
     ),
     create_new_attribute = 'feature',
+    inf_samples_per_vol = 550,
     patch_sampling_callback = work_funct,
     patch_sampling_callback_kwargs = {'nbins': 128, 'include': 'input'},
     **data_loader_shared_kwargs
@@ -81,7 +83,8 @@ class NPCSegmentSolverCFG(SegmentationSolverCFG):
     decay_on_plateau    = False
 
     init_lr = 1E-5
-    batch_size = 10
+    batch_size = 40
+    batch_size_val = 40
 
     lr_sche = 'ExpoentialLR'
     lr_sche_args = [0.99]

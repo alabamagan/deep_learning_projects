@@ -18,6 +18,8 @@ import logging
 from typing import Union, Any, List, Optional
 import time
 
+PathLike = Union[str, Path]
+
 sequence_choice = ['T2WFS', 'T1W', 'CET1W', 'CET1WFS']
 
 # @click.command()
@@ -27,7 +29,16 @@ sequence_choice = ['T2WFS', 'T1W', 'CET1W', 'CET1WFS']
 #               help=f"Set the sequence. Chose from [{','.join(sequence_choice)}]")
 # @click.option('--skip-norm', default=False, is_flag=True, help="If true, skip intensity normalization")
 # @click.option('--inference', default=False, is_flag=True, help="For guild operation")
-def main(input_dir, output_dir, sequence, skip_norm, inference, debug=False):
+def main(input_dir : PathLike,
+         output_dir: PathLike,
+         sequence  : str,
+         inference : bool,
+         skip_norm : Optional[bool] = False,
+         debug     : Optional[bool] = False,
+         keep_intermediate_segments: Optional[bool] =False):
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+
     main_logger = MNTSLogger('.', 'main', verbose=True, keep_file=False)
     t_start = time.time()
     main_logger.info("{:=^80}".format(" NPC auto Segmentation Running "))
@@ -63,26 +74,34 @@ def main(input_dir, output_dir, sequence, skip_norm, inference, debug=False):
             tempfile.TemporaryDirectory() as output_tempdir:
         # Put normalized images in a temp folder
         normed_tempdir_path = Path(normed_tempdir)
-        # Create normalizer
-        norm = NPCSegmentPreprocesser(normalization_graph, normalization_states)
-        norm.input_dir = input_dir
-        norm.output_dir = normed_tempdir_path
-        # debug
-        if debug:
-            debug_path = tempfile.TemporaryDirectory()
-            # copy 3 images to this path from the original input
-            for i, r in enumerate(Path(input_dir).rglob('*nii.gz')):
-                if i == 3:
-                    break
-                shutil.copy2(r, debug_path.name)
-            norm.input_dir = debug_path.name
 
-        norm.exec()
-        if debug:
-            debug_path.cleanup()
+        if not skip_norm:
+            # Create normalizer
+            norm = NPCSegmentPreprocesser(normalization_graph, state_dir=normalization_states)
+            norm.input_dir = input_dir
+            norm.output_dir = normed_tempdir_path
+            # debug
+            if debug:
+                debug_path = tempfile.TemporaryDirectory()
+                # copy 3 images to this path from the original input
+                for i, r in enumerate(Path(input_dir).rglob('*nii.gz')):
+                    if i == 3:
+                        break
+                    shutil.copy2(r, debug_path.name)
+                norm.input_dir = debug_path.name
+
+            norm.exec()
+            if debug:
+                debug_path.cleanup()
+
+            # Copy normalized output if
+            if keep_intermediate_segments:
+                shutil.copytree(normed_tempdir_path, output_dir / "Norm_output", dirs_exist_ok=True)
+        else:
+            shutil.copytree(input_dir, normed_tempdir, dirs_exist_ok=True)
 
 
-        # * Corase segmentation
+        # * Coarse segmentation
         # Intermediate output directory for coarse segmentation
         output_tempdir_path = Path(output_tempdir)
         coarse_out_path = output_tempdir_path / "Coarse"
@@ -92,9 +111,17 @@ def main(input_dir, output_dir, sequence, skip_norm, inference, debug=False):
                       coarse_out_path,
                       normed_tempdir_path / "HuangThresholding")
 
-        # grow the segmentation a git for better caturing the NPC, this function operates
+        # Copy coarse
+        if keep_intermediate_segments:
+            shutil.copytree(coarse_out_path, output_dir / "Coarse_output", dirs_exist_ok=True)
+
+        # grow the segmentation a bit for better capturing the NPC, this function operates
         # inplace and overwrites the nii.gz labels
         grow_segmentation(str(coarse_out_path))
+
+        # Copy grow_segmentation
+        if keep_intermediate_segments:
+            shutil.copytree(coarse_out_path, output_dir / "Growsegment_output", dirs_exist_ok=True)
 
 
         # * Fine segmentation
@@ -108,6 +135,10 @@ def main(input_dir, output_dir, sequence, skip_norm, inference, debug=False):
                       coarse_out_path)
 
 
+        # Copy fine segmentation
+        if keep_intermediate_segments:
+            shutil.copytree(fine_out_path, output_dir / "Finesegment_output", dirs_exist_ok=True)
+
         # * Post-processing
         pp_out_path = output_tempdir_path / "PostProcessed"
         pp_out_path.mkdir(exist_ok=True)
@@ -115,12 +146,11 @@ def main(input_dir, output_dir, sequence, skip_norm, inference, debug=False):
         seg_post_main(fine_out_path, pp_out_path)
 
         # * Move results to output path
-        output_dir = Path(output_dir)
         if not output_dir.is_dir():
             output_dir.mkdir(parents=True, exist_ok=True)
 
         for f in pp_out_path.rglob("*nii.gz"):
-            main_logger.info(f"Copying: {str(f)}")
+            main_logger.info(f"Copying: {str(f)} -> {str(output_dir.absolute())}")
             shutil.copy2(str(f.absolute()), str(output_dir.absolute()))
 
 
@@ -170,5 +200,7 @@ def run_inference(cfg: PMIControllerCFG,
 
 if __name__ == '__main__':
     input_dir = "/home/lwong/Source/Repos/deep_learning_projects/NPC_Segmentation/72.RecurrentData/StudyFilesBySequence/Pre/T2W-FS_TRA"
-    output_dir ="/home/lwong/Source/Repos/deep_learning_projects/NPC_Segmentation/72.RecurrentData/StudyFilesBySequence/Segment/T2W-FS_TRA"
-    main(input_dir, output_dir, 'T2WFS', False, True, debug=False)
+    # input_dir = "/home/lwong/FTP/2.Projects/8.NPC_Segmentation/72.RecurrentData/StudyFilesBySequence/Test_Input/"
+    output_dir ="/home/lwong/FTP/2.Projects/8.NPC_Segmentation/72.RecurrentData/StudyFilesBySequence/Segment/T2W-FS_TRA/"
+    main(input_dir, output_dir, 'T2WFS', True,
+         skip_norm=False, debug=True, keep_intermediate_segments=False)
