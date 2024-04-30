@@ -22,20 +22,28 @@ PathLike = Union[str, Path]
 
 sequence_choice = ['T2WFS', 'T1W', 'CET1W', 'CET1WFS']
 
-# @click.command()
-# @click.argument('-i', '--input-dir', required=True, type=click.Path(), help="For overriding input directory setting.")
-# @click.argument('-o', '--output-dir', required=True, type=click.Path(), help="For overriding output directory setting.")
-# @click.option('--sequence', default='T2WFS', type=click.Choice(sequence_choice, case_sensitive=True),
-#               help=f"Set the sequence. Chose from [{','.join(sequence_choice)}]")
-# @click.option('--skip-norm', default=False, is_flag=True, help="If true, skip intensity normalization")
-# @click.option('--inference', default=False, is_flag=True, help="For guild operation")
+@click.command()
+@click.argument('input-dir', required=True, type=click.Path())
+@click.argument('output-dir', required=True, type=click.Path())
+@click.option('--sequence', default='T2WFS', nargs=1,
+              type=click.Choice(sequence_choice, case_sensitive=True),
+              help=f"Set the sequence. Chose from [{','.join(sequence_choice)}]")
+@click.option('--skip-norm', default=False, is_flag=True,
+              help="If true, skip intensity normalization")
+@click.option('--debug', default=False, is_flag=True,
+              help="If true, only operate on the first three case globbed.")
+@click.option('--inference', default=False, is_flag=True,
+              help="For guild operation")
+@click.option("--keep-intermediate-segments", default=False, is_flag=True,
+              help="If specified, keep intermediate data created.")
 def main(input_dir : PathLike,
          output_dir: PathLike,
          sequence  : str,
          inference : bool,
          skip_norm : Optional[bool] = False,
          debug     : Optional[bool] = False,
-         keep_intermediate_segments: Optional[bool] =False):
+         keep_intermediate_segments: Optional[bool] = False,
+         **kwargs):
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
 
@@ -153,7 +161,6 @@ def main(input_dir : PathLike,
             main_logger.info(f"Copying: {str(f)} -> {str(output_dir.absolute())}")
             shutil.copy2(str(f.absolute()), str(output_dir.absolute()))
 
-
     main_logger.info("{:=^80}".format(f" Segmentation Done (Total: {time.time() - t_start:.01f}s) "))
     pass
 
@@ -199,8 +206,4 @@ def run_inference(cfg: PMIControllerCFG,
 
 
 if __name__ == '__main__':
-    input_dir = "/home/lwong/Source/Repos/deep_learning_projects/NPC_Segmentation/72.RecurrentData/StudyFilesBySequence/Pre/T2W-FS_TRA"
-    # input_dir = "/home/lwong/FTP/2.Projects/8.NPC_Segmentation/72.RecurrentData/StudyFilesBySequence/Test_Input/"
-    output_dir ="/home/lwong/FTP/2.Projects/8.NPC_Segmentation/72.RecurrentData/StudyFilesBySequence/Segment/T2W-FS_TRA/"
-    main(input_dir, output_dir, 'T2WFS', True,
-         skip_norm=False, debug=True, keep_intermediate_segments=False)
+    main()
