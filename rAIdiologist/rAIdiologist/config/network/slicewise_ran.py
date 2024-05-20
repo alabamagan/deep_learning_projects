@@ -80,7 +80,7 @@ class RAN_25D(nn.Module):
         self.r2        = ResidualBlock3d(512          , 1024, p     = dropout / 4.)
         self.att3      = AttentionModule_25d(1024     , 1024, stage = 2      )
         self.out_conv1 = ResidualBlock3d(1024         , 2048, p     = dropout / 2. )
-        self.out_conv2 = nn.Sequential(*([ResidualBlock3d(2048, 2048, p = dropout)] * 2))
+        self.out_conv2 = nn.Sequential(*([ResidualBlock3d(2048, 2048, p = dropout) for i in range(2)]))
 
         # Output layer
         self.out_bn = nn.Sequential(
@@ -219,6 +219,9 @@ class RAN_25D(nn.Module):
 class SlicewiseAttentionRAN(RAN_25D):
     r"""This modification adds a branch that computes an attention weight of for each input slice. The attention
     weights are then used to weight the deep features reducing the extracted features by slices using MaxPool.
+
+    .. note::
+        Different to original RAN_25, this version also skipped `out_conv2`, which is a sequential residual blocks
 
     Attributes:
         in_ch (int):
