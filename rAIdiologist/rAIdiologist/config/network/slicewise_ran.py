@@ -42,7 +42,7 @@ class RAN_25D(nn.Module):
         dropout (float, Optional):
             Dropouts for residual blocks. Default to 0.1.
         return_top (bool, Optional):
-            Whether to also return the slicewise prediction. Must be have `exclude_fc` set to `False`.
+            If `True`, also return the fc_output of the slicewise prediction. See :method:`forward_top` for more.
 
     """
     _strats_dict = {
@@ -160,9 +160,12 @@ class RAN_25D(nn.Module):
         if x.dim() < 3:
             x = x.unsqueeze(0)
 
+        # If `exclude_top` is set to True, directly return the reduced slicewise prediction.
         if not self.exclude_top:
             if self.return_top:
+                # Copy the slicewie output (B x C x S)
                 sw_prediction = x
+            # Fed features through final output FC
             x = self.forward_top(B, nonzero_slice, x)
 
         if self.sigmoid_out:
@@ -173,7 +176,9 @@ class RAN_25D(nn.Module):
             return x, sw_prediction
 
     def forward_top(self, B, nonzero_slice, x) -> torch.Tensor:
-        r"""Output FC layer that collapse slicewise prediction to a single prediction.
+        r"""For regular forward, this is the final layer of output, where the extracted features are fed through the
+        output FC layer. If :attr:`excluded_top` is set to `True`, this function is skipped, and the output from sw
+        layer is directly returned.
 
         Args:
             B (int):
