@@ -15,11 +15,17 @@ class RAN_25D(nn.Module):
     r"""This is a 2.5D network that will process the image volume and give a prediction of specified channel.
 
     This is a modification of the Residual attention network, which was originally developed for 2D classification. In
-    this network, the input convolutional is modified ot have a kernel of 3×3×3 whereas the rest of the conv kernels in
-    the truck and the attention branches are all modified to
+    this network, the input convolution is modified to have a 3D kernel with a size of 7×7×3 size. The stride is set
+    to 2×2×1 to also perform downsample, saving some of the memories. The rest of the residual blocks all have 3d
+    kernels.
 
+    The attention modules are configured to be mostly 3D, with only the softmax branch set to have a kernel size of
+    3×3×1. For the residual blocks within the attention modules, the kernels are still 3D.
 
-    Attributes:
+    The dropouts were configured to increase with depth, this prevents the propagation of zeros to easily disable the
+    training of the whole network.
+
+    Args:
         in_ch (int):
             Number of in channels.
         out_ch (int):
@@ -206,8 +212,8 @@ class RAN_25D(nn.Module):
 
 
 class SlicewiseAttentionRAN(RAN_25D):
-    r"""
-
+    r"""This modification adds a branch that computes an attention weight of for each input slice. The attention
+    weights are then used to weight the deep features reducing the extracted features by slices using MaxPool.
 
     Attributes:
         in_ch (int):
@@ -318,7 +324,6 @@ class SlicewiseAttentionRAN(RAN_25D):
             return x, sw_prediction
         else:
             return x
-
 
     def get_mask(self):
         #[[B,H,W,D],[B,H,W,D],[B,H,W,]]
