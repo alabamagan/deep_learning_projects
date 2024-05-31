@@ -30,6 +30,9 @@ class rAIController(PMIController):
         if self.solver_cfg.rAI_fixed_mode >= 3:
             self.solver_cfg.batch_size_val = self.solver_cfg.batch_size // 4
 
+        # Substitue attribute to solver
+        self.solver_cfg.rAI_pretrained_CNN = self.cfg.rAI_pretrained_CNN
+
         # temp test to see if radiologist solver is problematic
         # if self.solver_cfg.rAI_fixed_mode == 0:
         #     self.solver_cls = BinaryClassificationSolver
