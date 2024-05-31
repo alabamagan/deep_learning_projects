@@ -64,7 +64,6 @@ class MySolverCFG(rAIdiologistSolverCFG):
     init_lr       = 1E-4
     batch_size    = 8
     num_of_epochs = 200
-    rAI_pretrained_swran = './Backup/rAIdiologist_{fold_code}_pretrain.pt'
 
     unpack_key_forward   = ['input'  , 'gt']
     unpack_key_inference = ['input']
@@ -84,7 +83,7 @@ class MySolverCFG(rAIdiologistSolverCFG):
     rAI_inf_save_playbacks = True
 
     loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([1.2]),
-                                      conf_factor=1.5,
+                                      conf_factor=1.2,
                                       conf_pos_weight=0.1)
 
 id_list_dir = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold"
@@ -98,6 +97,7 @@ class MyControllerCFG(PMIControllerCFG):
     cp_load_dir = './Backup/rAIdiologist_{fold_code}.pt'
     cp_save_dir = './Backup/rAIdiologist_{fold_code}.pt'
     log_dir     = f"./Backup/Log/rAIdiologist_{datetime.strftime(datetime.now(), '%Y-%m-%d')}.log"
+    rAI_pretrained_CNN = './Backup/rAIdiologist_{fold_code}_pretrain.pt'
 
     _data_loader_cfg     = data_loader
     _data_loader_inf_cfg = data_loader_inf
