@@ -1,3 +1,7 @@
+# Depracation Notice
+
+This project is separated from this code repo because it should run as a stand alone software.
+
 # Intro
 
 This project is written to reuse an old checkpoint for segmentation of NPC on MRI. 
