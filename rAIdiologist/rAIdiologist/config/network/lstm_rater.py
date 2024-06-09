@@ -1,8 +1,10 @@
 from typing import Optional, Union
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 from einops import rearrange, repeat
-from torch import nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_sequence
 
 from pytorch_med_imaging.networks.layers import PositionalEncoding, NormLayers
@@ -78,24 +80,34 @@ class LSTM_rater(nn.Module):
 
     def forward(self,
                 x: torch.Tensor,
-                seq_length: Union[torch.Tensor, list]):
-        r"""Note that layer
+                seq_length: Union[torch.Tensor, list]) -> torch.Tensor:
+        """Processes the input tensor using an LSTM network.
 
+        This method takes an input tensor `x` and its sequence lengths, processes it through an LSTM after
+        normalization and dropout, and then applies a fully connected layer to generate output for each sequence.
+        Optionally it can concatenate predictions from a CNN model if provided.
 
         Args:
             x (torch.Tensor):
-                Input tensor of the encoded slice, assume the input already excluded the first and the bottom slice that
-                were padded after the convolution. Dimension should be (B x S x C).
-            seq_length (list):
-                A list of number of slices in each element of the input mini-batch. E.g., if the input is the padded
-                sequence with [10, 15, 13] slices, it would be padded into a a tensor of (3 x 15 x C), the seq length
-                would be [8, 13, 11] excluding the top and bottom slice of each element.
-            cnn_pred (torch.FloatTensor, Optinal):
-                This is the prediction of the CNN. If this is provided, the CNN value will be attached to the input
-                of x along the channel axis
+                Input tensor of the encoded slice, with dimensions (B, S, C) where B is the batch size, S is the sequence
+                length (number of slices), and C is the number of channels.
+            seq_length (torch.Tensor|list):
+                Sequence lengths for each batch element, indicating the actual number of slices in each sequence
+                before padding. For instance, for an input tensor padded to (3, 15, C), the sequence lengths might
+                be [10, 13, 15] representing the original number of slices in each sequence.
+            cnn_pred (Optional, torch.FloatTensor):
+                Prediction tensor from a CNN model, which will be concatenated to the input tensor `x` along the
+                channel dimension if provided.
 
         Returns:
+            torch.Tensor:
+                The output tensor after processing through LSTM and fully connected layer. The output tensor has
+                the dimensions (B, S', out_channels), where B is the batch size, S' is the sequence length adjusted
+                for the fully connected layer processing, and out_channels is the number of output channels from
+                the fully connected layer. The output tensor is padded back to the maximum sequence length in the batch.
 
+        Raises:
+            ValueError: If `seq_length` is neither a tensor nor a list.
         """
         # required input size: (B x S x C)
         num_slice = x.shape[1]
@@ -146,11 +158,8 @@ class LSTM_rater(nn.Module):
 
 
 class Transformer_rater(nn.Module):
-    r"""This LSTM rater receives inputs as a sequence of deep features extracted from each slice. This module has two
-    operating mode, `stage_1` and `stage_2`. In `stage_1`, the module inspect the whole stack of features and directly
-    return the output. In `stage_2`, the module will first inspect the whole stack, generating a prediction for each
-    slice together with a confidence score. Then, starts at the middle slice, it will scan either upwards or downwards
-    until the confidence score reaches a certain level for a successive number of times.
+    r"""This Transformer rater is a Transformer encoder that accepts (B x L x C) input and output (B x L+1 x C). A
+    classification token is prepended to the input sequence, where the transformer will try to generate the output
 
     This module also offers to record the predicted score, confidence score and which slice they are deduced. The
     playback are stored in the format:
@@ -159,28 +168,34 @@ class Transformer_rater(nn.Module):
          ...]
 
     """
-    def __init__(self, in_ch, embed_ch=1024, out_ch=2, record=False, iter_limit=5, dropout=0.2):
+    def __init__(self, in_ch, embed_ch=2048, out_ch=2, record=False, dropout=0.2):
         super(Transformer_rater, self).__init__()
-        # Batch size should be 1
-        # self.lstm_reviewer = nn.LSTM(in_ch, embeded, batch_first=True, bias=True)
 
-        trans_encoder_layer = nn.TransformerEncoderLayer(d_model=in_ch, nhead=4, dim_feedforward=embed_ch, dropout=dropout)
-        self.embedding = nn.TransformerEncoder(trans_encoder_layer, num_layers=6)
-        self.pos_encoder = PositionalEncoding(d_model=in_ch)
+        # Note that batch_first is not set to `True` here because Transformer Encoder doesn't work like that
+        trans_encoder_layer = TransformerEncoderLayerWithAttn(d_model=in_ch, nhead=32, dim_feedforward=embed_ch,
+                                                              dropout=dropout, need_weights=record)
+        self.embedding = nn.TransformerEncoder(trans_encoder_layer, num_layers=10)
 
+        # position encoding
+        self.pos_encoder = PositionalEncoding(d_model=in_ch, max_len=50, dropout=dropout / 2.)
+
+        # Learnable classification token
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, in_ch))
+
+        # Final dropout before output layer
         self.dropout = nn.Dropout(p=dropout)
+
+        # Output layer
         self.out_fc = nn.Sequential(
             nn.LayerNorm(embed_ch),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             nn.Linear(embed_ch, out_ch)
         )
-        self.lstm = nn.LSTM(in_ch, embed_ch, bidirectional=True, num_layers=2, batch_first=True)
 
         # for playback
         self.play_back = []
 
         # other settings
-        self.iter_limit = iter_limit
         self._RECORD_ON = record
         self.register_buffer('_mode', torch.IntTensor([1])) # let it save the state too
         self.register_buffer('_embed_ch', torch.IntTensor([embed_ch]))
@@ -193,63 +208,128 @@ class Transformer_rater(nn.Module):
 
     @property
     def RECORD_ON(self):
-        return self._record_on
+        return self._RECORD_ON
 
     @RECORD_ON.setter
     def RECORD_ON(self, r):
         self._RECORD_ON = r
 
+    def _initalization(self):
+        r"""Initialize network"""
+        def init_weights(m):
+            if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding):
+                torch.nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    torch.nn.init.zeros_(m.bias)
+        self.apply(init_weights)
+
     def forward(self, *args):
+        # Note that pretrain stage (mode = 0) this shouldn't be invoked.
         if self._mode in (1, 2, 3, 4, 5):
             return self.forward_(*args)
         else:
             raise ValueError("There are only stage `1` or `2`, when mode = [1|2], this runs in stage 1, when "
                              "mode = [3|4], this runs in stage 2.")
 
-    def forward_(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None):
+    def forward_(self, x: torch.Tensor, topslices: torch.Tensor) -> torch.Tensor:
         r"""
 
-
         Args:
-            padding_mask:
-                Passed to `self.embedding` attribute `src_key_padding_mask`. The masked portion should be `True`.
-
-        Returns:
+            x (torch.Tensor): Input tensor. Dimensions are (Batch size, Slice, Channels).
+            topslices (torch.Tensor): Vector that indicate the top slice for mask creation
 
         """
-        # assert x.shape[0] == 1, f"This rater can only handle one sample at a time, got input of dimension {x.shape}."
-        # required input size: (B x C x S), padding_mask: (B x S)
-        num_slice = x.shape[-1]
+        # required input size: (B x S x C)
+        max_slice = x.shape[1]
+        batch_size = x.shape[0]
 
-        # embed with transformer encoder
+        # * Create mask for zero paddings (1 means ignored), +1 because of cls_token
+        # note that for some reason, transformer wants (b s) instead of (s b) despite note setting batch first
+        src_key_padding_mask = torch.zeros(batch_size, max_slice+1, dtype=bool)
+        for i, top in enumerate(topslices):
+            src_key_padding_mask[i, top:].fill_(True)
+        src_key_padding_mask = src_key_padding_mask.to(x.device)
+
+        # Transformer batch_first was not set to True, so we have to permute it
+        x = rearrange(x, 'b s c -> s b c')
+        cls = rearrange(self.cls_token, 'b s c -> s b c').expand([1, batch_size, -1])
+
+        # Now prepend the cls token (S x B x C)
+        x = torch.cat([cls, x], dim=0)
+
+        # Perform pos-embedding
+        x = self.pos_encoder(x)
+
         # input (B x C x S), but pos_encoding request [S, B, C]
-        embed = self.embedding(self.pos_encoder(rearrange(x, 'b c s -> s b c')), src_key_padding_mask=padding_mask)
-        # embeded: (S, B, C) -> (B, S, C)
-        embed = rearrange(embed, 's b c -> b s c')
-
-        # LSTM embed: (B, S, C) -> _o: (B, S, 2 x C) !!LSTM is bidirectional!!
-        # !note that LSTM reorders reverse direction run of `output` already
-        _o, (_h, _c) = self.lstm(x.permute(0, 2, 1))
-
-        play_back = []
-
-        # _o: (B, S, C) -> _o: (B x S x 2 x C)
-        bsize, ssize, _ = _o.shape
-        o = _o.view(bsize, ssize, 2, -1) # separate the outputs from two direction
-        o = self.out_fc(self.dropout(o))    # _o: (B x S x 2 x fc)
-
         if self._RECORD_ON:
-            # d = direction, s = slice_indexG
-            d = torch.cat([torch.zeros(ssize), torch.ones(ssize)]).view(1, -1, 1)
-            slice_index = torch.cat([torch.arange(ssize)] * 2).view(1 ,-1, 1)
-            _o = o.view(bsize, ssize, -1).detach().cpu()
-            _o = torch.cat([_o[..., 0], _o[..., 1]], dim=1).view(bsize, -1, 1)
-            row = torch.cat([_o, d.expand_as(_o), slice_index.expand_as(_o)], dim=-1) # concat chans
-            self.play_back.append(row)
-        return o # no need to deal with up or down afterwards
+            embed, attn = self.embedding(x, src_key_padding_mask=src_key_padding_mask)
+            self.play_back.append(attn)
+        else:
+            embed = self.embedding(x, src_key_padding_mask=src_key_padding_mask)
+        # embeded: (S, B, C) -> (B, S, C)
+        embed = self.out_fc(rearrange(embed, 's b c -> b s c'))
+        return embed
 
     def clean_playback(self):
         self.play_back.clear()
 
     def get_playback(self):
         return self.play_back
+
+
+
+class TransformerEncoderLayerWithAttn(nn.TransformerEncoderLayer):
+    def __init__(self, *args,  need_weights = False, **kwargs):
+        super(TransformerEncoderLayerWithAttn, self).__init__(*args,**kwargs)
+        self.need_weights = need_weights
+
+    def forward(self, src, src_mask=None, src_key_padding_mask=None, **kwargs):
+        # Create the mask and convert it to correct type
+        src_key_padding_mask = F._canonical_mask(
+            mask=src_key_padding_mask,
+            mask_name="src_key_padding_mask",
+            other_type=F._none_or_dtype(src_mask),
+            other_name="src_mask",
+            target_type=src.dtype
+        )
+
+        x = src
+        # If True, also return the attention weights
+        if self.need_weights:
+            # Check if grad is requried
+            if x.requires_grad:
+                raise ArithmeticError("Attention is returned for inference only")
+            if self.norm_first:
+                _x, attn = self._sa_block(self.norm1(x), src_mask, src_key_padding_mask, need_weights=True)
+                x = x + _x
+                x = x + self._ff_block(self.norm2(x))
+            else:
+                _x, attn = self._sa_block(x, src_mask, src_key_padding_mask, need_weights=True)
+                x = self.norm1(x + _x)
+                x = self.norm2(x + self._ff_block(x))
+            return x, attn
+        else:
+            if self.norm_first:
+                x = x + self._sa_block(self.norm1(x), src_mask, src_key_padding_mask)
+                x = x + self._ff_block(self.norm2(x))
+            else:
+                x = self.norm1(x + self._sa_block(x, src_mask, src_key_padding_mask))
+                x = self.norm2(x + self._ff_block(x))
+            return x
+
+    # self-attention block adding attention
+    def _sa_block(self, x: torch.Tensor,
+                  attn_mask: Optional[torch.Tensor], key_padding_mask: Optional[torch.Tensor],
+                  need_weights: Optional[bool] = False) -> torch.Tensor:
+        if need_weights:
+            x, attn = self.self_attn(x, x, x,
+                               attn_mask=attn_mask,
+                               key_padding_mask=key_padding_mask,
+                               need_weights=True)
+            return x, attn
+        else:
+            x = self.self_attn(x, x, x,
+                               attn_mask=attn_mask,
+                               key_padding_mask=key_padding_mask,
+                               need_weights=False)[0]
+            return self.dropout1(x)
