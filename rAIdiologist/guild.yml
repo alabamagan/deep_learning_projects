@@ -76,7 +76,7 @@
         ACC: 'OverallACC: (\value)'
         AUC: 'OverallAUC: (\value)'
       requires:
-        - default
+        - default-inference
         - operation: train
           select:
             - 'flags.yaml'
@@ -137,6 +137,14 @@
       - file: './rAIdiologist/config'
         select:
           - '.*\.yaml'
+        target-type: 'copy'
+
+    default-inference:
+      - file: '../NPC_Segmentation'
+        target-type: 'link'
+      - file: './rAIdiologist/config'
+        select:
+          - '.*_inf\.yaml'
         target-type: 'copy'
 
     config:
