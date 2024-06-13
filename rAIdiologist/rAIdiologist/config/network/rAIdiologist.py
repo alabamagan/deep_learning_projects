@@ -31,8 +31,8 @@ class rAIdiologist(nn.Module):
         self.play_back = []
 
         # for guild hyper param tunning
-        cnn_drop = os.getenv('cnn_drop') or cnn_dropout
-        lstm_drop = os.getenv('lstm_drop') or rnn_dropout
+        cnn_dropout = float(os.getenv('cnn_drop', None)) or cnn_dropout
+        rnn_dropout = float(os.getenv('rnn_drop', None)) or rnn_dropout
 
         # Create inception for 2D prediction
         #!   Note that sigmoid_out should be ``False`` when the loss is already `WithLogits`.
@@ -195,7 +195,7 @@ class rAIdiologist(nn.Module):
 
         # if self.training:
         if False:
-            return o.view(B, -1, self._out_ch)
+            return self.get_prediction_train(o)
         else:
             out = self.inference_forward(B, o)
             return out
@@ -217,6 +217,7 @@ class rAIdiologist(nn.Module):
 
         """
         seq_len = self.rnn.current_seq_len
+        # Based on the sequence length, extracted the final slice prediction by lstm rater
         out = torch.stack([oo[-1] for oo in unpack_sequence(
             pack_padded_sequence(o, seq_len, batch_first=True, enforce_sorted=False)
         )]).view(B, self._out_ch)
@@ -278,10 +279,20 @@ class rAIdiologist(nn.Module):
         else:
             return self.forward_(*args)
 
+    def get_prediction_train(self, x: torch.Tensor) -> torch.Tensor:
+        r"""Return output for loss function. For LSTM rater, which is the default RNN, the ConfidenceBCE loss
+        was used. It calculates the loss based on output of all slices., therefore, simply reshape it into
+        (B x S x C)."""
+        return x.view(B, -1, self._out_ch)
+
 
 class rAIdiologist_Transformer(rAIdiologist):
     def __init__(self, in_ch = 1, out_ch=2, record=False, cnn_dropout=0.15, rnn_dropout=0.1, bidirectional=False, mode=0,
                  reduce_strats='max', custom_cnn=None, custom_rnn=None):
+        # for guild hyper param tunning
+        cnn_dropout = float(os.getenv('cnn_drop', None)) or cnn_dropout
+        rnn_dropout = float(os.getenv('rnn_drop', None)) or rnn_dropout
+
         # * Define CNN and RNN
         # TODO: Debug for the following
         # - There's a fixed prediction during inference
@@ -300,7 +311,8 @@ class rAIdiologist_Transformer(rAIdiologist):
         pass
 
     def inference_forward(self, B, o):
-        return o
+        r"""Here, as CrossEntropy is used as loss, the inference is the regular path"""
+        return self.get_prediction_train(o)
 
     def forward_(self, x):
         r"""Override to change the default behavior, the follwoing changes were made to cater with the use of
@@ -328,16 +340,14 @@ class rAIdiologist_Transformer(rAIdiologist):
             x_play_back = x.detach()
         x = x.permute(0, 2, 1).contiguous() # (B x C x S) -> (B x S x C)
 
-        # o: (B x S x [out_ch + 1]), lstm output dense layer will also decide its confidence
+        # o: (B x S x out_ch)
         o = self.rnn(x[:, 1:],  # discard the first and last slice because CNN kernel is [3x3x3]
                      torch.as_tensor(top_slices).int() - 1) # -1 discard the last slice
-
         if self.RECORD_ON and not self.training:
             self.collect_playback(reduced_x, x_play_back)
 
-        # if self.training:
-        if False:
-            return o.view(B, -1, self._out_ch)
+        if self.training:
+            return self.get_prediction_train(o)
         else:
             out = self.inference_forward(B, o)
             return out
@@ -347,8 +357,27 @@ class rAIdiologist_Transformer(rAIdiologist):
             return self.forward_cnn(*args)
         else:
             # * Padding the input if its a list
-
             return self.forward_(*args)
+
+
+    def get_prediction_train(self, x: torch.Tensor) -> torch.Tensor:
+        r"""For transformer, the final output is the prediction at the classification token only. The loss function
+        used is the regular CrossEntropy, which accepts input with (B x num_class). The classification token is
+        prepended to the sequence within the transformer, so its the first element in the S-axis.
+
+        .. note::
+            Right now, the choice of the loss function is controlled by the controller. The class weight, however, is
+            automatically calculated in the solver because it needs to have access to data in order to do the
+            calculation.
+
+        Args:
+            x (torch.Tensor):
+                Output from "forward" function. Should have a dimension (B x S x C)
+
+        Returns:
+            torch.Tensor
+        """
+        return x[:, 0]
 
 
 def create_rAIdiologist_v1():

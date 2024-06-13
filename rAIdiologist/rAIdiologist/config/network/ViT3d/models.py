@@ -10,7 +10,6 @@ Summary of modifications:
     * Implement RAN encoder
 
 """
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -30,7 +29,7 @@ from pytorch_med_imaging.networks.layers.StandardLayers3D import MaskedSequentia
 from pytorch_med_imaging.networks.AttentionResidual import AttentionModule_25d
 from typing import Optional
 from torch.distributions.normal import Normal
-from einops import rearrange
+from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
 logger = logging.getLogger(__name__)
@@ -263,17 +262,29 @@ class Embeddings(nn.Module):
         #                                out_channels=config.hidden_size,
         #                                kernel_size=patch_size,
         #                                stride=patch_size)
+        self.grid_size = grid_size
+        self.patch_size = patch_size
+
         self.patch_embeddings = nn.Sequential(
             Rearrange('b c (h p1) (w p2) (z p3) -> b (z h w) (p3 p1 p2 c)',
                       p1 = patch_size[0], p2 = patch_size[1], p3 = patch_size[2]),
             nn.LayerNorm(in_ch * patch_size[0] * patch_size[1] * patch_size[2]),
             nn.Linear(in_ch * patch_size[0] * patch_size[1] * patch_size[2], config.hidden_size)
         )
-        # position embedding should also include the cls_token and sep_tokens
-        self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches + 1 , config.hidden_size))
+        # position embedding should also include the cls_token, note they need to be learnable
+        # but it is initialized according to original BERT
+        pos = torch.arange(0, n_patches + 1 + grid_size[2]).unsqueeze(1).float()
+        pos_embedding = torch.zeros(1, n_patches + 1 + grid_size[2], config.hidden_size)
+        div_term = torch.exp(torch.arange(0, config.hidden_size, 2).float() * -(math.log(10000.0) / config.hidden_size))
+        pos_embedding[..., 0::2] = torch.sin(pos * div_term)
+        pos_embedding[..., 1::2] = torch.cos(pos * div_term)
+        self.position_embeddings = nn.Parameter(pos_embedding)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, config.hidden_size))
 
         # This token separates the embedded patches from different slices.
+        self.sep_token = nn.Parameter(torch.rand(1, 1, config.hidden_size))
+
+        # Drop out before output
         self.dropout = Dropout(config.transformer["dropout_rate"])
 
 
@@ -286,8 +297,15 @@ class Embeddings(nn.Module):
             x, _ = self.hybrid_model(x)
         x = self.patch_embeddings(x)
 
+        # Insearch slice seperation tokens
+        x = rearrange(x, 'b (n_slice n_patches_per_slice) h -> b n_slice n_patches_per_slice h',
+                      n_slice = self.grid_size[2], n_patches_per_slice= self.grid_size[0] * self.grid_size[1])
+        b, n_slice, n_patches_per_slice, h = x.shape
+        sep_tokens = repeat(self.sep_token, '1 1 h -> b n_slice 1 h', b = b, n_slice = n_slice, h = h)
+        x = torch.cat((x, sep_tokens), dim=2) # Attach to the end of patches
+        x = rearrange(x, 'b ns np h -> b (ns np) h')
         # Classificaiton token is attached to the head
-        x = torch.cat((cls_tokens, x), dim=1)
+        x = torch.cat((cls_tokens, x), dim=1) # (B, n_patches+1, hidden)
 
         embeddings = x + self.position_embeddings
         embeddings = self.dropout(embeddings)
@@ -654,14 +672,14 @@ class RANEncoder(nn.Module):
 
         self.in_conv1  = Conv3d_pmi(n_channels,
                                     encoder_channels[0],
-                                    kern_size = [7, 7, 3], stride = [2, 2, 1], padding = [3, 3, 1])
+                                    kern_size = [7, 7, 1], stride = [2, 2, 1], padding = [3, 3, 0])
         self.in_conv2  = ResidualBlock3d(encoder_channels[0]    , encoder_channels[1])
         self.att1      = AttentionModule_25d(encoder_channels[1], encoder_channels[1], stage = 0)
-        self.r1        = ResidualBlock3d(encoder_channels[1]    , encoder_channels[2], p     = dropout / 2.)
-        self.att2      = AttentionModule_25d(encoder_channels[2], encoder_channels[2], stage = 1      )
-        self.r2        = ResidualBlock3d(encoder_channels[2]    , encoder_channels[3], p     = dropout / 1.)
-        self.att3      = AttentionModule_25d(encoder_channels[3], encoder_channels[3], stage = 2      )
-        self.out_conv  = ResidualBlock3d(encoder_channels[3]    , encoder_channels[4], p     = dropout)
+        self.att2      = AttentionModule_25d(encoder_channels[2], encoder_channels[2], stage = 1)
+        self.att3      = AttentionModule_25d(encoder_channels[3], encoder_channels[3], stage = 2)
+        self.r1        = ResidualBlock3d(encoder_channels[1], encoder_channels[2], p = dropout / 2.)
+        self.r2        = ResidualBlock3d(encoder_channels[2], encoder_channels[3], p = dropout / 1.)
+        self.out_conv  = ResidualBlock3d(encoder_channels[3], encoder_channels[4], p = dropout)
         self.out_res   = nn.Sequential(*[ResidualBlock3d(encoder_channels[4], encoder_channels[4], p = dropout)
                                          for i in range(2)])
 
@@ -746,7 +764,6 @@ class ViTVNetImg2Pred(nn.Module):
             return x, attention
         else:
             return x
-
 
 class VecInt(nn.Module):
     """

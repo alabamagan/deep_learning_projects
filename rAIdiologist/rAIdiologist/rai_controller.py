@@ -3,6 +3,7 @@ from pytorch_med_imaging.solvers import BinaryClassificationSolver
 from pytorch_med_imaging.inferencers import BinaryClassificationInferencer
 from typing import Union, Optional
 from pathlib import Path
+import torch.nn as nn
 
 PathLike = Union[str, Path]
 
@@ -11,11 +12,7 @@ class rAIController(PMIController):
     def override_cfg(self, override_file: PathLike):
         r"""Additional overrides that is specific with rAI configurations"""
         super(rAIController, self).override_cfg(override_file)
-        #
-        # if self.solver_cfg.rAI_fixed_mode >= 0:
-        #     self.data_loader_cfg.augmentation = './rAIdiologist_transform_inf.yaml'
-        #     self.data_loader_cfg.sampler = None
-        #     self.data_loader_cfg.sampler_kwargs = None
+
 
         # If MaxVit is used size required is [320, 320, 20]
         if self.net_name.find('maxvit') >= 0:
@@ -27,18 +24,14 @@ class rAIController(PMIController):
             self.inferencer_cls = BinaryClassificationInferencer
             self._data_loader_inf_cfg.augmentation = './maxvit_inf_transform.yaml'
 
+        # * Save some memory by using less batch-size during validation
         if self.solver_cfg.rAI_fixed_mode >= 3:
             self.solver_cfg.batch_size_val = self.solver_cfg.batch_size // 4
 
-        # Substitue attribute to solver
+        # * Pass attribute from controller to solver
+        # passing the network checkpoint
         self.solver_cfg.rAI_pretrained_CNN = self.cfg.rAI_pretrained_CNN
 
-        # temp test to see if radiologist solver is problematic
-        # if self.solver_cfg.rAI_fixed_mode == 0:
-        #     self.solver_cls = BinaryClassificationSolver
-
-        # if self.net_name in ('old_swran'):
-        #     self.inferencer_cls = BinaryClassificationInferencer
 
     def exec(self):
         r"""Because the network might be redefined by guild after :func:`override_cfg` is called, the mode is explicitly

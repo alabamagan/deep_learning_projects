@@ -4,13 +4,15 @@ ToCanonical:
   {}
 Resample:
   - 'input'
+RandomMotion:
+  translation: 5 # mm
 RandomAffine:
   scales: [0.9, 1.1]
   degrees: [0, 0, 15]
 RandomFlip:
   - 'lr'
 RandomNoise:
-  std: [5, 15]
+  std: [1, 15]
 CropOrPad:
   - [350, 350, 30]
   - padding_mode: 0

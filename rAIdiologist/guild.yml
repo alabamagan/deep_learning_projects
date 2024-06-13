@@ -20,12 +20,9 @@
         cnn_drop:
           env-name: cnn_drop
           default: 0.1
-        lstm_drop:
-          env-name: lstm_drop
+        rnn_drop:
+          env-name: rnn_drop
           default: 0.2
-        lstm_initlr_factor:
-          env-name: lstm_initlr_factor
-          default: 5
       flags-dest: config:rAIdiologist/config/flags/flags.yaml
       flags-import: all
       output-scalars:

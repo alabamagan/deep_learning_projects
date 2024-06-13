@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Union, Any
 
 import torch
 import torch.nn as nn
@@ -12,11 +12,16 @@ from pytorch_med_imaging.networks.layers import PositionalEncoding, NormLayers
 
 
 class LSTM_rater(nn.Module):
-    r"""This LSTM rater receives inputs as a sequence of deep features extracted from each slice. This module has two
-    operating mode, `stage_1` and `stage_2`. In `stage_1`, the module inspect the whole stack of features and directly
-    return the output. In `stage_2`, the module will first inspect the whole stack, generating a prediction for each
-    slice together with a confidence score. Then, starts at the middle slice, it will scan either upwards or downwards
-    until the confidence score reaches a certain level for a successive number of times.
+    r"""A specialized LSTM-based module for rating sequences based on deep features of each slice.
+
+    This module operates in two stages:
+    - `stage_1`: Inspects the entire stack of features and returns the output directly.
+    - `stage_2`: Inspects the entire stack, generating predictions and confidence scores for each slice.
+      Starting from the middle slice, it scans either upwards or downwards until the confidence score
+      reaches a specified threshold for a consecutive number of times.
+
+    Optionally, the module can record predictions, confidence scores, and their corresponding slice indices.
+    The records are stored in a list of tensors, each containing the prediction, direction of scan, and slice index.
 
     This module also offers to record the predicted score, confidence score and which slice they are deduced. The
     playback are stored in the format:
@@ -24,6 +29,44 @@ class LSTM_rater(nn.Module):
          (torch.Tensor([prediction, direction, slice_index]),  # data 2
          ...]
 
+    Args:
+        in_ch (int):
+            Number of input channels (features) for the LSTM.
+        embed_ch (int, optional):
+            Number of embedding channels for the LSTM. Default is 1024.
+        out_ch (int, optional):
+            Number of output channels for the final linear layer. Default is 2.
+        record (bool, optional):
+            If set to True, records the prediction and confidence score of each slice. Default is False.
+        iter_limit (int, optional):
+            Limit on the number of iterations for scanning in `stage_2`. Default is 5.
+        dropout (float, optional):
+            Dropout rate used in LSTM and the dropout layer in the output stage. Default is 0.2.
+        bidirectional (bool, optional):
+            If set to True, uses a bidirectional LSTM. Default is False.
+        sum_slices (int, optional):
+            Number of consecutive slices to sum for producing the final output. Default is 3.
+
+    Attributes:
+        cls_token (torch.nn.Parameter):
+            Learnable parameter that represents classification instruction.
+        play_back (list):
+            List to store playback information if recording is enabled.
+        _mode (torch.IntTensor):
+            Operational mode of the module, stored as a buffer.
+        _embed_ch (torch.IntTensor):
+            Number of embedding channels, stored as a buffer.
+        _bidirectional (torch.IntTensor):
+            Indicates if the LSTM is bidirectional, stored as a buffer.
+
+    Example:
+        >>> lstm_rater = LSTM_rater(in_ch=128, record=True)
+        >>> input_tensor = torch.randn(1, 10, 128)  # (batch size, sequence length, features)
+        >>> output = lstm_rater(input_tensor)
+        >>> print(output.shape)
+        torch.Size([1, 2])
+        >>> print(lstm_rater.play_back)
+        [torch.Tensor([...]), ...]
     """
     def __init__(
             self,
@@ -87,6 +130,16 @@ class LSTM_rater(nn.Module):
         normalization and dropout, and then applies a fully connected layer to generate output for each sequence.
         Optionally it can concatenate predictions from a CNN model if provided.
 
+        .. mermaid::
+
+        .. note::
+            - If :attr:`sum_slices` is not 0, the output will be
+            For example, if you have an encoded sequence [1, 2, 3, 4, 5], it will be stacked with rolling into
+                [[1, 2, 3, 4, 5],
+                 [2, 3, 4, 5, 1],
+                 [3, 4, 5, 1, 2]
+            This will then be flattened for out_fc to generate the output.
+
         Args:
             x (torch.Tensor):
                 Input tensor of the encoded slice, with dimensions (B, S, C) where B is the batch size, S is the sequence
@@ -95,9 +148,6 @@ class LSTM_rater(nn.Module):
                 Sequence lengths for each batch element, indicating the actual number of slices in each sequence
                 before padding. For instance, for an input tensor padded to (3, 15, C), the sequence lengths might
                 be [10, 13, 15] representing the original number of slices in each sequence.
-            cnn_pred (Optional, torch.FloatTensor):
-                Prediction tensor from a CNN model, which will be concatenated to the input tensor `x` along the
-                channel dimension if provided.
 
         Returns:
             torch.Tensor:
@@ -112,12 +162,9 @@ class LSTM_rater(nn.Module):
         # required input size: (B x S x C)
         num_slice = x.shape[1]
 
-        # Convert seq_length to tensor if it isn't
-        if not isinstance(seq_length, torch.Tensor):
-            seq_length = torch.Tensor(seq_length).int()
-
         # norm expects (B x S x C)
         x = self.lstm_norm(x, seq_length=seq_length)
+
         x = pack_padded_sequence(self.dropout(x), seq_length, batch_first=True, enforce_sorted=False)
         # !note that bidirectional LSTM reorders reverse direction run of `output` (`_o`) already
         _o, (_h, _c) = self.lstm(x)
@@ -180,7 +227,7 @@ class Transformer_rater(nn.Module):
         self.pos_encoder = PositionalEncoding(d_model=in_ch, max_len=50, dropout=dropout / 2.)
 
         # Learnable classification token
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, in_ch))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, in_ch, dtype=torch.float))
 
         # Final dropout before output layer
         self.dropout = nn.Dropout(p=dropout)
@@ -276,6 +323,8 @@ class Transformer_rater(nn.Module):
     def get_playback(self):
         return self.play_back
 
+    def get_prediction(self, *args: Any) -> torch.Tensor:
+        pass
 
 
 class TransformerEncoderLayerWithAttn(nn.TransformerEncoderLayer):

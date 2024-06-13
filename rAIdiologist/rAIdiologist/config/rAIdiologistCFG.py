@@ -1,5 +1,7 @@
-from pytorch_med_imaging.solvers import BinaryClassificationSolver
-from pytorch_med_imaging.inferencers import BinaryClassificationInferencer
+import os
+
+from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolver
+from pytorch_med_imaging.inferencers import BinaryClassificationInferencer, ClassificationInferencer
 from pytorch_med_imaging.controller import PMIControllerCFG
 from pytorch_med_imaging.pmi_data_loader import PMIImageFeaturePairLoader, PMIImageFeaturePairLoaderCFG
 from pytorch_med_imaging.solvers.earlystop import LossReferenceEarlyStop
@@ -26,9 +28,9 @@ data_loader = PMIImageFeaturePairLoaderCFG(
         patch_size = [320, 320, 25]
     ),
     tio_queue_kwargs = dict(            # dict passed to ``tio.Queue``
-        max_length             = 40,
-        samples_per_volume     = 1,
-        num_workers            = 8,
+        max_length             = 240,
+        samples_per_volume     = 2,
+        num_workers            = min(12, os.cpu_count() * 3 // 4),
         shuffle_subjects       = True,
         shuffle_patches        = True,
         start_background       = True,
@@ -47,7 +49,7 @@ data_loader_inf = PMIImageFeaturePairLoaderCFG(
     tio_queue_kwargs = dict(            # dict passed to ``tio.Queue``
         max_length             = 15,
         samples_per_volume     = 1,
-        num_workers            = 8,
+        num_workers            = min(12, os.cpu_count() * 3 // 4),
         shuffle_subjects       = True,
         shuffle_patches        = True,
         start_background       = True,
@@ -57,7 +59,7 @@ data_loader_inf = PMIImageFeaturePairLoaderCFG(
 
 class MySolverCFG(rAIdiologistSolverCFG):
     r"""This is created to cater for the configuration of rAIdiologist network"""
-    net           = rAIdiologist(out_ch = 1, dropout = 0.2, lstm_dropout = 0.2)
+    net           = rAIdiologist(out_ch = 1, cnn_dropout= 0.2, rnn_dropout= 0.2)
     rAI_run_mode  = 1
     optimizer     = 'Adam'
     # init_mom      = 0.95
@@ -118,3 +120,6 @@ class PretrainControllerCFG(MyControllerCFG):
     cp_load_dir    = MyControllerCFG.cp_load_dir.replace('.pt', '_pretrain.pt')
     cp_save_dir    = MyControllerCFG.cp_save_dir.replace('.pt', '_pretrain.pt')
     output_dir     = MyControllerCFG.output_dir + "_pretrain"
+    # Override some settings
+    solver_cfg     = MySolverCFG()
+    solver_cfg.rAI_pretrain_mode = True

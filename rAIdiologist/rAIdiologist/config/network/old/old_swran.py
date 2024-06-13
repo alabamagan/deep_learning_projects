@@ -82,7 +82,6 @@ class SlicewiseAttentionRAN_old(nn.Module):
             x = x.unsqueeze(0)
         x = self.in_conv1(x)
 
-
         # Construct slice weight
         x_w = self.in_sw(x).squeeze()
         if self.save_weight:

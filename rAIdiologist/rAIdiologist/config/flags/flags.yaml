@@ -14,6 +14,7 @@ solver_cfg:
   lr_sche: 'OneCycleLR'
   lr_sche_args: 0.02
   lr_sche_kwargs: "{'cycle_momentum':True,'three_phase':True,'div_factor':100}"
+  lr_weights: "{}"
 #  lr_sche: 'CosineAnnealingWarmRestarts'
 #  lr_sche_args: '[]'
 #  lr_sche_kwargs: "{'T_0': 50, 'T_mult': 2, 'eta_min': 0}"

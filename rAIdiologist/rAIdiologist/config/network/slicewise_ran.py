@@ -1,3 +1,4 @@
+import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -221,7 +222,13 @@ class SlicewiseAttentionRAN(RAN_25D):
     weights are then used to weight the deep features reducing the extracted features by slices using MaxPool.
 
     .. note::
-        Different to original RAN_25, this version also skipped `out_conv2`, which is a sequential residual blocks
+        - Different to original RAN_25, this version also skipped `out_conv2`, which is a sequential residual blocks.
+        - Here's a list of major differences between this implementation and the original old SWRAN:
+            1. `self.out_conv1` kernel size and stride is different. `kern_size=[3, 3, 1] -> [7, 7, 3]` [Note: I change
+                it back becuase its better]
+            2. The old SWRAN uses axis permutation to prepare tensor for multiplication with `in_sw` weights, but
+               in this implementation we use einops for better interpretability.
+
 
     Attributes:
         in_ch (int):
@@ -301,7 +308,7 @@ class SlicewiseAttentionRAN(RAN_25D):
 
         # Permute the axial dimension to the last
         x = F.max_pool3d(x, [2, 2, 1], stride=[2, 2, 1])
-        x = x * x_w.view([B, 1, 1, 1, -1]).expand_as(x)
+        x = x * einops.rearrange(x_w, 'b sc -> b 1 1 1 sc').expand_as(x)
 
         # Resume dimension
         x = self.in_conv2(x)

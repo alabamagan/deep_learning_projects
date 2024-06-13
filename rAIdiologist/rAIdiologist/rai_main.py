@@ -15,6 +15,9 @@ rai_options = {
         'rai_v4'      : create_rAIdiologist_v4(),
         'rai_v41'     : create_rAIdiologist_v41(), # with grided ViT
         'rai_v42'     : create_rAIdiologist_v42(), # with grided ViT
+        'rai_v43'     : create_rAIdiologist_v43(), # with grided ViT
+        'rai_v5'      : create_rAIdiologist_v5(),  # with transformer
+        'rai_v5.1'    : create_rAIdiologist_v5_1(),
         'rai_old'     : create_old_rAI(),
         'rai_old_mean': create_old_rAI_rmean(),
         'mean_swran': SlicewiseAttentionRAN_old(1, 1, reduce_by_mean=True),

@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 
 from typing import Union, Any
-from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolverCFG
+from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolverCFG, ClassificationSolver
 from ..config.network.rAIdiologist import rAIdiologist
 import gc
 
@@ -20,7 +20,7 @@ class rAIdiologistSolverCFG(ClassificationSolverCFG):
         rAI_fixed_mode (int):
             Select from mode 1 - 5. Otherwise the mode will automatically progress based on the total epoch number
             and the current epoch number. Default to ``None``.
-        rAI_pretrained_swran (str):
+        rAI_pretrained_CNN (str):
             If specified, the CNN portion will load the pre-trained SWRAN states. Otherwise, it is initialized using
             default initialization method. Default to empty string ``""``.
         rAI_classification (bool):
@@ -28,12 +28,15 @@ class rAIdiologistSolverCFG(ClassificationSolverCFG):
             Default to ``False``.
         rAI_inf_save_playbacks (bool):
             If ``True``, play back will be saved to the ``output_dir``. Typically use with inference mode.
+        rAI_pretrain_mode (bool):
+
 
     """
     rAI_fixed_mode        : int  = None
-    rAI_pretrained_swran  : str  = ""
+    rAI_pretrained_CNN    : str  = ""
     rAI_classification    : bool = False
     rAI_inf_save_playbacks: bool = False
+    rAI_pretrain_mode     : bool = False
 
     loss_function = nn.BCEWithLogitsLoss()
     net = rAIdiologist(1)
@@ -47,15 +50,15 @@ class rAIdiologistSolver(BinaryClassificationSolver):
 
         self._current_mode = None # initially, the mode is unsetted
 
-        # Load fro mstored state
-        if Path(self.rAI_pretrained_swran).is_file():
-            self._logger.info(f"Loading pretrained SWRAN network from: {self.rAI_pretrained_swran}")
-            result = self.net.load_pretrained_swran(self.rAI_pretrained_swran)
+        # Load from stored state
+        if Path(self.rAI_pretrained_CNN).is_file():
+            self._logger.info(f"Loading pretrained CNN network from: {self.rAI_pretrained_CNN}")
+            result = self.net.load_pretrained_CNN(self.rAI_pretrained_CNN)
             if str(result) != "<All keys matched successfully>":
                 self._logger.warning(f"Some keys were not loaded.")
                 self._logger.warning(f"{result}")
         else:
-            self._logger.warning(f"Pretrained SWRAN network specified ({self.rAI_pretrained_swran}) "
+            self._logger.warning(f"Pretrained CNN network specified ({self.rAI_pretrained_CNN}) "
                                  f"but not loaded.")
 
         if os.getenv('CUBLAS_WORKSPACE_CONFIG') not in [":16:8", ":4096:2"]:
@@ -79,50 +82,56 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         by the network. In mode 0, the output shape is (B x 1)"""
 
         # res: (B x S x C)/(B x S x 1)/B x (S x C), g: (B x 1)
-        g = g.detach().cpu()
-        res = res.detach().cpu()
-        chan = res.shape[-1] # if chan > 1, there is a value for confidence
-        if res.dim() == 3:
-            res = res[:, -1]
-        _data =np.concatenate([res.view(-1, chan).data.numpy(), g.data.view(-1, 1).numpy()], axis=-1)
-        _df = pd.DataFrame(data=_data, columns=['res_%i'%i for i in range(chan)] + ['g'])
-        _df['Verify_wo_conf'] = (_df['res_0'] >= 0) == (_df['g'] > 0)
-        _df['Verify_wo_conf'].replace({True: "Correct", False: "Wrong"}, inplace=True)
-        if chan == 2:
-            _df['Verify_w_conf'] = ((_df['res_0'] >= 0) == (_df['g'] > 0)) == (_df['res_1'] >= 0)
-            _df['Verify_w_conf'].replace({True: "Correct", False: "Wrong"}, inplace=True)
-        if chan == 4:
-            rename_dict = {
-                'res_0': 'overall_pred',
-                'res_1': 'CNN_pred',
-                'res_2': 'Weights',
-                'res_3': 'LSTM_pred'
-            }
-            _df.rename(rename_dict, inplace=True, axis=1)
-            _df['Same sign'] = (_df['CNN_pred'] / _df['CNN_pred'].abs()) \
-                              == (_df['LSTM_pred'] / _df['LSTM_pred'].abs())
-
-        # res: (B x C)/(B x 1)
-        if chan > 1:
-            dic = torch.zeros_like(res[..., 0])
-            dic = dic.type_as(res).int() # move to cuda if required
-            dic[torch.where(res[..., 0] >= 0)] = 1
+        if isinstance(self.loss_function, nn.CrossEntropyLoss):
+            return super(BinaryClassificationSolver, self)._build_validation_df(g, res, uid)
         else:
-            dic = (res >= 0).type_as(res).int()
+            g = g.detach().cpu()
+            res = res.detach().cpu()
+            chan = res.shape[-1] # if chan > 1, there is a value for confidence
+            if res.dim() == 3:
+                res = res[:, -1]
+            _data =np.concatenate([res.view(-1, chan).data.numpy(), g.data.view(-1, 1).numpy()], axis=-1)
+            _df = pd.DataFrame(data=_data, columns=['res_%i'%i for i in range(chan)] + ['g'])
+            _df['Verify_wo_conf'] = (_df['res_0'] >= 0) == (_df['g'] > 0)
+            _df['Verify_wo_conf'].replace({True: "Correct", False: "Wrong"}, inplace=True)
+            if chan == 2:
+                _df['Verify_w_conf'] = ((_df['res_0'] >= 0) == (_df['g'] > 0)) == (_df['res_1'] >= 0)
+                _df['Verify_w_conf'].replace({True: "Correct", False: "Wrong"}, inplace=True)
+            if chan == 4:
+                rename_dict = {
+                    'res_0': 'overall_pred',
+                    'res_1': 'CNN_pred',
+                    'res_2': 'Weights',
+                    'res_3': 'LSTM_pred'
+                }
+                _df.rename(rename_dict, inplace=True, axis=1)
+                _df['Same sign'] = (_df['CNN_pred'] / _df['CNN_pred'].abs()) \
+                                  == (_df['LSTM_pred'] / _df['LSTM_pred'].abs())
 
-        if uid is not None:
-            try:
-                _df.index = uid
-            except:
-                pass
-        return _df, dic.view(-1, 1)
+            # res: (B x C)/(B x 1)
+            if chan > 1:
+                dic = torch.zeros_like(res[..., 0])
+                dic = dic.type_as(res).int() # move to cuda if required
+                dic[torch.where(res[..., 0] >= 0)] = 1
+            else:
+                dic = (res >= 0).type_as(res).int()
+
+            if uid is not None:
+                try:
+                    _df.index = uid
+                except:
+                    pass
+            return _df, dic.view(-1, 1)
 
     def _align_g_res_size(self, g, res):
         # g: (B x 1), res is either (B x S x C)) or (B x C)
-        g = g.squeeze()
-        if res.dim() == 1:
-            res = res.view(-1, 1)
-        return g.view(-1, 1), res
+        if isinstance(self.loss_function, nn.CrossEntropyLoss):
+            return super(BinaryClassificationSolver, self)._align_g_res_size(g, res)
+        else:
+            g = g.squeeze()
+            if res.dim() == 1:
+                res = res.view(-1, 1)
+            return g.view(-1, 1), res
 
     def _epoch_prehook(self, *args, **kwargs):
         r"""Update mode of network"""
@@ -146,6 +155,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
 
     def _set_net_mode(self, mode):
         try:
+            # When there's data parallel
             self.net.get_submodule('module').set_mode(mode)
             self.net.get_submodule('module').RECORD_ON = False
         except:
@@ -154,6 +164,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         self._current_mode = mode
 
     def validation(self) -> list:
+        # Save current train mode
         original_mode = self.get_net()._mode.item()
         if original_mode > 3:
             self._set_net_mode(-1) # inference when not pretraining (i.e., mode = 0)
@@ -163,6 +174,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
     def _validation_step_callback(self, g: torch.Tensor, res: torch.Tensor, loss: Union[torch.Tensor, float],
                                   uids=None) -> None:
         r"""Uses :attr:`perf` to store the dictionary of various data."""
+
         self.validation_losses.append(loss.item())
         if len(self.perfs) == 0:
             self.perfs.append({
@@ -186,27 +198,10 @@ class rAIdiologistSolver(BinaryClassificationSolver):
             store_dict['predictions'].extend(res.flatten().tolist())
         if isinstance(uids, (tuple, list)):
             store_dict['uids'].extend(uids)
-
-    def optimizer_set_params(self):
-        r"""The learning rate of RNN and CNN are inherently different, and we can't use the same for both and train
-        them together. Therefore, this method is overrided to tune the factor."""
-        if not isinstance(self.get_net(), rAIdiologist):
-            super().optimizer_set_params()
+            
+    def _validation_callback(self) -> None:
+        if isinstance(self.loss_function, nn.CrossEntropyLoss):
+            return super(BinaryClassificationSolver, self)._validation_callback()
         else:
-            net = self.net
-            lstm_factor = os.getenv('lstm_initlr_factor', 5)
-            assert isinstance(net, rAIdiologist), "Incorrect network setting."
-            args = [
-                {"params": net.cnn.parameters(), "lr": self.init_lr},
-                {"params": net.lstm_rater.parameters(), "lr": self.init_lr * 5},
-            ]
-            if self.optimizer == 'Adam':
-                self.optimizer = torch.optim.Adam(args)
-            elif self.optimizer == 'AdamW':
-                self.optimizer = torch.optim.AdamW(args)
-            elif self.optimizer == 'SGD':
-                for a in args:
-                    a['momentum'] = self.init_mom
-                self.optimizer = torch.optim.SGD(args)
-            else:
-                raise AttributeError(f"Expecting optimzer to be one of ['Adam'|'SGD'|'AdamW']")
+            return super(rAIdiologistSolver,self)._validation_callback()
+        
