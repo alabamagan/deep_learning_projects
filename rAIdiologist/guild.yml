@@ -3,6 +3,10 @@
     pretrain:
       main: main --pretrain
       description: Pretrain the CNN
+      flags:
+        cnn_drop:
+          env-name: cnn_drop
+          default: 0.2
       flags-dest: config:rAIdiologist/config/flags/flags.yaml
       flags-import: all
       output-scalars:
