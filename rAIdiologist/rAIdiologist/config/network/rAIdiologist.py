@@ -1,5 +1,7 @@
 import warnings
 import os
+from typing import Any, Mapping
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,8 +33,9 @@ class rAIdiologist(nn.Module):
         self.play_back = []
 
         # for guild hyper param tunning
-        cnn_dropout = float(os.getenv('cnn_drop', None)) or cnn_dropout
-        rnn_dropout = float(os.getenv('rnn_drop', None)) or rnn_dropout
+        cnn_dropout = float(os.getenv('cnn_drop') or cnn_dropout)
+        rnn_dropout = float(os.getenv('rnn_drop') or rnn_dropout)
+
 
         # Create inception for 2D prediction
         #!   Note that sigmoid_out should be ``False`` when the loss is already `WithLogits`.
@@ -87,6 +90,12 @@ class rAIdiologist(nn.Module):
         else:
             return super().state_dict(*args, **kwargs)
 
+    def load_state_dict(self, *args, **kwargs):
+        if self._mode == 0:
+            return self.cnn.load_state_dict(*args, **kwargs)
+        else:
+            return super().load_state_dict(*args, **kwargs)
+
     def clean_playback(self):
         r"""Call this after each forward run to clean the playback. Otherwise, you need to keep track of the order
         of data feeding into forward function."""
@@ -105,8 +114,6 @@ class rAIdiologist(nn.Module):
             self.requires_grad_(False)
             self.cnn.requires_grad_(True)
             self.cnn.return_top = False
-            self.cnn.train()
-            self.dropout.train()
             # This should not have any grad but set it anyways
             self.rnn.eval()
         elif mode in (1, 3):
@@ -118,7 +125,7 @@ class rAIdiologist(nn.Module):
 
             # Set CNN to eval mode to disable batchnorm learning and dropouts
             self.cnn.eval()
-            self.dropout.eval()
+            self.dropout.train()
 
             # Set LSTM to train mode for training
             self.rnn.train()
@@ -268,6 +275,7 @@ class rAIdiologist(nn.Module):
         self.rnn.clean_playback()
 
     def forward_cnn(self, *args):
+        print(f"Forward CNN")
         if len(args) > 0: # restrict input to only a single image
             return self.cnn.forward(args[0])
         else:
@@ -290,8 +298,8 @@ class rAIdiologist_Transformer(rAIdiologist):
     def __init__(self, in_ch = 1, out_ch=2, record=False, cnn_dropout=0.15, rnn_dropout=0.1, bidirectional=False, mode=0,
                  reduce_strats='max', custom_cnn=None, custom_rnn=None):
         # for guild hyper param tunning
-        cnn_dropout = float(os.getenv('cnn_drop', None)) or cnn_dropout
-        rnn_dropout = float(os.getenv('rnn_drop', None)) or rnn_dropout
+        cnn_dropout = float(os.getenv('cnn_drop', None) or cnn_dropout)
+        rnn_dropout = float(os.getenv('rnn_drop', None) or rnn_dropout)
 
         # * Define CNN and RNN
         # TODO: Debug for the following
@@ -307,8 +315,15 @@ class rAIdiologist_Transformer(rAIdiologist):
                          custom_cnn=cnn, custom_rnn=rnn)
 
     def collect_playback(self, reduced_x, x_play_back) -> None:
-        # Do nothing because its not implemented
-        pass
+        r"""Return the self attention tensor from transformer. No need extra processing.
+
+        .. note::
+            * The play back should be the self-attention of a single mini-batch
+            * Each play back should have a size of `(B x S x S)` where `S` is the number of slice
+        """
+        df = []
+        for sa in self.get_playback():
+            print(sa.shape)
 
     def inference_forward(self, B, o):
         r"""Here, as CrossEntropy is used as loss, the inference is the regular path"""
