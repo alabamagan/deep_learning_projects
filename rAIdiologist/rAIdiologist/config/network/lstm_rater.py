@@ -260,6 +260,9 @@ class Transformer_rater(nn.Module):
     @RECORD_ON.setter
     def RECORD_ON(self, r):
         self._RECORD_ON = r
+        for name, layers in self.embedding.named_modules():
+            if isinstance(layers, TransformerEncoderLayerWithAttn):
+                layers.need_weights = r
 
     def _initalization(self):
         r"""Initialize network"""
@@ -307,9 +310,16 @@ class Transformer_rater(nn.Module):
         # Perform pos-embedding
         x = self.pos_encoder(x)
 
+        # * Get playback
         # input (B x C x S), but pos_encoding request [S, B, C]
         if self._RECORD_ON:
-            embed, attn = self.embedding(x, src_key_padding_mask=src_key_padding_mask)
+            embed= self.embedding(x, src_key_padding_mask=src_key_padding_mask)
+            attn = {}
+            # for each transformer layer
+            for name, m in self.embedding.named_modules():
+                # read self attention if it is a transformer layer
+                if isinstance(m, TransformerEncoderLayerWithAttn):
+                    attn[name] = m.attn_playback.pop()
             self.play_back.append(attn)
         else:
             embed = self.embedding(x, src_key_padding_mask=src_key_padding_mask)
@@ -331,6 +341,7 @@ class TransformerEncoderLayerWithAttn(nn.TransformerEncoderLayer):
     def __init__(self, *args,  need_weights = False, **kwargs):
         super(TransformerEncoderLayerWithAttn, self).__init__(*args,**kwargs)
         self.need_weights = need_weights
+        self.attn_playback = []
 
     def forward(self, src, src_mask=None, src_key_padding_mask=None, **kwargs):
         # Create the mask and convert it to correct type
@@ -356,7 +367,9 @@ class TransformerEncoderLayerWithAttn(nn.TransformerEncoderLayer):
                 _x, attn = self._sa_block(x, src_mask, src_key_padding_mask, need_weights=True)
                 x = self.norm1(x + _x)
                 x = self.norm2(x + self._ff_block(x))
-            return x, attn
+
+            self.attn_playback.append(attn.cpu())
+            return x
         else:
             if self.norm_first:
                 x = x + self._sa_block(self.norm1(x), src_mask, src_key_padding_mask)
@@ -382,3 +395,6 @@ class TransformerEncoderLayerWithAttn(nn.TransformerEncoderLayer):
                                key_padding_mask=key_padding_mask,
                                need_weights=False)[0]
             return self.dropout1(x)
+
+    def clean_playback(self):
+        self.attn_playback.clear()

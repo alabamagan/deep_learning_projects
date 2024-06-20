@@ -174,6 +174,8 @@ class rAIdiologistSolver(BinaryClassificationSolver):
     def _validation_step_callback(self, g: torch.Tensor, res: torch.Tensor, loss: Union[torch.Tensor, float],
                                   uids=None) -> None:
         r"""Uses :attr:`perf` to store the dictionary of various data."""
+        if isinstance(self.loss_function, nn.CrossEntropyLoss):
+            return super(BinaryClassificationSolver, self)._validation_step_callback(g, res, loss, uids)
 
         self.validation_losses.append(loss.item())
         if len(self.perfs) == 0:

@@ -95,7 +95,7 @@ class MyControllerCFG(PMIControllerCFG):
     fold_code   = 'B00'
     id_list     = id_list_dir + "/{fold_code}.ini"
     id_list_val = id_list_dir + "/Validation.txt"
-    output_dir  = './NPC_Segmentation/98.Output/NPC_Screening_old/{fold_code}'
+    output_dir  = './Results/{fold_code}'
     cp_load_dir = './Backup/rAIdiologist_{fold_code}.pt'
     cp_save_dir = './Backup/rAIdiologist_{fold_code}.pt'
     log_dir     = f"./Backup/Log/rAIdiologist_{datetime.strftime(datetime.now(), '%Y-%m-%d')}.log"
@@ -115,11 +115,12 @@ class MyControllerCFG(PMIControllerCFG):
 
 
 class PretrainControllerCFG(MyControllerCFG):
-    solver_cls     = BinaryClassificationSolver
-    inferencer_cls = BinaryClassificationInferencer
+    # solver_cls     = BinaryClassificationSolver
+    # inferencer_cls = BinaryClassificationInferencer
     cp_load_dir    = MyControllerCFG.cp_load_dir.replace('.pt', '_pretrain.pt')
     cp_save_dir    = MyControllerCFG.cp_save_dir.replace('.pt', '_pretrain.pt')
     output_dir     = MyControllerCFG.output_dir + "_pretrain"
     # Override some settings
     solver_cfg     = MySolverCFG()
     solver_cfg.rAI_pretrain_mode = True
+    solver_cfg.rAI_fixed_mode = 0

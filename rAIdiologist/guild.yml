@@ -84,8 +84,7 @@
         - operation: train
           select:
             - 'flags.yaml'
-            - 'rAIdiologist'
-          target-type: 'link'
+          target-type: 'copy'
         - copy-checkpoint
         - link-log
 

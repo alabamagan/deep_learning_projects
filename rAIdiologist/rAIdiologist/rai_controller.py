@@ -29,7 +29,7 @@ class rAIController(PMIController):
             self.solver_cfg.batch_size_val = self.solver_cfg.batch_size // 4
 
         # * Pass attribute from controller to solver
-        # passing the network checkpoint
+        # passing the network checkpoint, this is needed because guild flags are not optimized
         self.solver_cfg.rAI_pretrained_CNN = self.cfg.rAI_pretrained_CNN
 
 

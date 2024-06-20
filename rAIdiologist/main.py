@@ -41,12 +41,12 @@ def main(inference, ddp, pretrain):
             raise ArithmeticError(msg)
         cfg.run_mode = 'inference'
 
-    # If pretrain, force mode open to 0
+    # If pretrain, force mode open to 0, this was done in CFG already but just incase its not loaded properly
     if pretrain:
+        # Change the flags file
         with open('flags.yaml', 'r') as f:
             loaded_flags = yaml.safe_load(f.read())
         loaded_flags['solver_cfg']['rAI_fixed_mode'] = 0
-        print(loaded_flags)
         with open('flags.yaml', 'w') as f:
             yaml.dump(loaded_flags, f)
 
@@ -67,8 +67,9 @@ def main(inference, ddp, pretrain):
                 # When in pretrain mode (i.e., mode = 0), the solver needs to change,
                 # if larger than 1, we can't use binary classification solver
                 controller._logger.info("Forcing solver to be `ClassificationSolver`")
-                controller.solver_cls = ClassificationSolver
-                controller.inferencer_cls = ClassificationInferencer
+                # controller.solver_cls = ClassificationSolver
+                # controller.inferencer_cls = ClassificationInferencer
+                controller.solver_cfg.rAI_classification = True
                 controller.solver_cfg.loss_function = torch.nn.CrossEntropyLoss(weight=torch.FloatTensor([0.5, 1.2]))
             else:
                 # Otherwise in training mode, we only need to change the loss function to CrossEntropy

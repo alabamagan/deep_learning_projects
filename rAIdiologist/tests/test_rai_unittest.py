@@ -11,6 +11,7 @@ from rAIdiologist.config.rAIdiologistCFG import *
 from rAIdiologist.solvers import *
 import unittest
 import torch
+from einops.layers.torch import Rearrange
 from mnts.mnts_logger import MNTSLogger
 from pytorch_med_imaging.controller import PMIController
 from pytorch_model_summary.model_summary import summary
@@ -24,6 +25,7 @@ class Test3DNetworks(unittest.TestCase):
             self.skipTest('Base test class')
         num_slice = 30
         num_data = 4
+        torch.random.manual_seed(30)
         self.sample_input_big = torch.rand(num_data, 1, 512, 512, num_slice).cuda()
         self.sample_input = torch.rand(num_data, 1, 128, 128, num_slice).cuda()
         self.sample_input_size1 = torch.rand(1, 1, 128, 128, num_slice).cuda()
@@ -60,6 +62,7 @@ class Test3DNetworks(unittest.TestCase):
             out = self.net(self.sample_input_size1)
             print(out.shape)
             self.expect_dim(out, self.EXPECTED_DIM)
+
 
 class TestOldSWRAN(Test3DNetworks):
     def setUp(self) -> None:
@@ -107,11 +110,32 @@ class TestSWRAN(Test3DNetworks):
         super(TestSWRAN, self).setUp()
         self.net = SlicewiseAttentionRAN(1, 1).cuda()
 
+class TestRAIv3(TestRAIdiologist):
+    def setUp(self) -> None:
+        super(TestRAIdiologist, self).setUp()
+        self.net = create_rAIdiologist_v3().cuda()
+        del self.EXPECTED_DIM
+
+class TestRAIv5(TestRAIdiologist):
+    def setUp(self) -> None:
+        super(TestRAIdiologist, self).setUp()
+        self.net = create_rAIdiologist_v5().cuda()
+
+    def expect_dim(self, out, expected_dim):
+        if self.net._mode != 0:
+            self.EXPECTED_DIM = 3
+        super().expect_dim(out, self.EXPECTED_DIM)
+class TestRAIv5_1(TestRAIdiologist):
+    def setUp(self) -> None:
+        super(TestRAIdiologist, self).setUp()
+        self.net = create_rAIdiologist_v5_1().cuda()
+
 class TestViT(Test3DNetworks):
     def setUp(self) -> None:
         super(TestViT, self).setUp()
         config = CONFIGS['ViT3d-Img2Pred']
-        config.patches.grid = (4, 4, 5)
+        # After encode, patch-size is (20, 20, 25), `config.patches.grid` must be able to fully divide the patch
+        config.patches.grid = (10, 10, 25)
         self.sample_input = torch.rand(4, 1, 320, 320, 25).cuda()
         self.sample_input_size1 = torch.rand(1, 1, 320, 320, 25).cuda()
         self.net = ViTVNetImg2Pred(config, num_classes=1, img_size=(320, 320, 25)).cuda()

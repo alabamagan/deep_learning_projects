@@ -16,15 +16,17 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
             If `True`, the playbacks will be written out as a single JSON file.
         playbacks (list):
             A list of `torch.FloatTensor` with dim (3 x X)
+        rAI_classification (bool):
+            If true, some of the function will be ported to :class:`ClassificationInferencer`
 
     """
+
+
     def __init__(self, *args, **kwargs):
         super(rAIdiologistInferencer, self).__init__(*args, **kwargs)
         self.playbacks = []
         self._logger.debug(f"Mode: {self.rAI_fixed_mode}")
-        if self.rAI_fixed_mode not in (0, 1):
-            self.net.set_mode(-1) # -1 is the inference mode, which is actually mode 4 for now.
-        else:
+        if self.rAI_fixed_mode == 0:
             self.net.set_mode(self.rAI_fixed_mode)
             self._logger.info("Running inference for mode 0")
 
@@ -52,6 +54,10 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
             out_tensor: (B x 3)
             gt_tensor: (B x 1)
         """
+        if self.rAI_classification:
+            return super(BinaryClassificationInferencer, self)._reshape_tensors(out_list,
+                                                                                gt_list)
+
         if gt_list is None:
             raise AttributeError("gt_list should not be none, if there are no gt, it should be an empty list.")
 
@@ -78,35 +84,45 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
              uids:
              gt:
         """
-        dl = super(rAIdiologistInferencer, self)._writter(out_tensor[..., 0].view(-1, 1),
-                                                          uids,
-                                                          gt,
-                                                          sig_out=True)
-        try:
-            dl._data_table['Conf_0'] = out_tensor[..., 2]
-        except IndexError:
-            pass
-        try:
-            # Sorting must be done after assigning the conf vector because the order of out_tensor
-            # is not indexed.
-            dl._data_table.set_index('IDs', inplace=True)
+        if self.rAI_classification:
+            dl = super(BinaryClassificationInferencer, self)._writter(out_tensor,
+                                                                      uids,
+                                                                      gt,
+                                                                      sig_out=True)
             dl._data_table.sort_index(inplace=True)
-        except AttributeError or IndexError:
-            self._logger.warning("IDs is not a column in the data table.")
-        # Write again
-        self._logger.info(f"Writing results to {self.output_dir}")
-        dl.write(self.output_dir)
 
-        if self.rAI_inf_save_playbacks:
-            out_path = Path(self.output_dir).with_suffix('.json')
-            self._logger.debug(f"playbacks: {self.playbacks}")
-            self._logger.info(f"Writing playbacks to: {str(out_path)}")
-            if len(uids) != len(self.playbacks):
-                self._logger.warning("Playback does not match uids")
-            out_dict = {u: l.tolist() for u, l in zip(uids, self.playbacks)}
-            with out_path.open('w') as jf:
-                json.dump(out_dict, jf, sort_keys=True)
-        return dl
+            #TODO: Write playback
+            return dl
+        else:
+            dl = super(rAIdiologistInferencer, self)._writter(out_tensor[..., 0].view(-1, 1),
+                                                              uids,
+                                                              gt,
+                                                              sig_out=True)
+            try:
+                dl._data_table['Conf_0'] = out_tensor[..., 2]
+            except IndexError:
+                pass
+            try:
+                # Sorting must be done after assigning the conf vector because the order of out_tensor
+                # is not indexed.
+                dl._data_table.set_index('IDs', inplace=True)
+                dl._data_table.sort_index(inplace=True)
+            except AttributeError or IndexError:
+                self._logger.warning("IDs is not a column in the data table.")
+            # Write again
+            self._logger.info(f"Writing results to {self.output_dir}")
+            dl.write(self.output_dir)
+
+            if self.rAI_inf_save_playbacks:
+                out_path = Path(self.output_dir).with_suffix('.json')
+                self._logger.debug(f"playbacks: {self.playbacks}")
+                self._logger.info(f"Writing playbacks to: {str(out_path)}")
+                if len(uids) != len(self.playbacks):
+                    self._logger.warning("Playback does not match uids")
+                out_dict = {u: l.tolist() for u, l in zip(uids, self.playbacks)}
+                with out_path.open('w') as jf:
+                    json.dump(out_dict, jf, sort_keys=True)
+            return dl
 
     def _forward_hook_gen(self):
         r"""This hook gen copies the playback from rAIdiologist after each forward run"""
@@ -114,10 +130,32 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
             if isinstance(module, rAIdiologist):
                 playback = module.get_playback()
                 if len(playback) == 0:
-                    raise AttributeError("No playback is available.")
+                    self._logger.warning("No playback is available.")
                 self.playbacks.extend(module.get_playback())
             return
         return copy_playback
+
+    def _prepare_output_dict(self, gt, out_tensor, sig_out, uids) -> dict:
+        if self.rAI_classification:
+            return super(BinaryClassificationInferencer, self)._prepare_output_dict(gt, out_tensor, sig_out, uids)
+        else:
+            return super()._prepare_output_dict(gt, out_tensor, sig_out, uids)
+
+    def display_summary(self):
+        if self.rAI_classification:
+            return super(BinaryClassificationInferencer, self).display_summary()
+        else:
+            return super().display_summary()
+
+    def _reshape_tensors(self,
+                         out_list: Iterable[torch.FloatTensor],
+                         gt_list: Iterable[torch.FloatTensor]):
+        if self.rAI_classification:
+            return super(BinaryClassificationInferencer, self)._reshape_tensors(out_list, gt_list)
+        else:
+            return super()._reshape_tensors(out_list, gt_list)
+
+
 
 def _playback_clean_hook(module, input):
     r"""This hook cleans the rAIdiologist playback list prior to running a mini-batch"""
