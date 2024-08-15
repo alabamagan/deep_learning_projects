@@ -1,8 +1,9 @@
 import torch
 import json
+import einops
 from pathlib import Path
 from pytorch_med_imaging.inferencers.BinaryClassificationInferencer import BinaryClassificationInferencer
-from typing import Union, Iterable, Optional
+from typing import Union, Iterable, Optional, Tuple
 from ..config.network.rAIdiologist import *
 
 __all__ = ['rAIdiologistInferencer']
@@ -55,6 +56,9 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
             gt_tensor: (B x 1)
         """
         if self.rAI_classification:
+            if isinstance(out_list, (list, tuple)):
+                # For rAI_v5.1 classification version, the output is now a tuple of prediction and confidence.
+                out_list, conf = out_list
             return super(BinaryClassificationInferencer, self)._reshape_tensors(out_list,
                                                                                 gt_list)
 
@@ -94,9 +98,13 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
             #TODO: Write playback
             return dl
         else:
+            # Assume (B x 2 x C), where 2 is prediction and confidence
+            if out_tensor.dim() == 3:
+                out_tensor = einops.rearrange(out_tensor, 'b i c -> b c i').squeeze()
+
             dl = super(rAIdiologistInferencer, self)._writter(out_tensor[..., 0].view(-1, 1),
                                                               uids,
-                                                              gt,
+                                                              gt.view(-1, 1),
                                                               sig_out=True)
             try:
                 dl._data_table['Conf_0'] = out_tensor[..., 2]
@@ -147,14 +155,11 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
         else:
             return super().display_summary()
 
-    def _reshape_tensors(self,
-                         out_list: Iterable[torch.FloatTensor],
-                         gt_list: Iterable[torch.FloatTensor]):
-        if self.rAI_classification:
-            return super(BinaryClassificationInferencer, self)._reshape_tensors(out_list, gt_list)
-        else:
-            return super()._reshape_tensors(out_list, gt_list)
-
+    def _prepare_network_output(self, out: Union[Tuple, torch.FloatTensor]) -> torch.FloatTensor:
+        r"""This is overriden to cater for network output that is sometimes a tuple."""
+        if isinstance(out, (list, tuple)):
+            out, conf = out
+        return super(self.__class__, self)._prepare_network_output(out)
 
 
 def _playback_clean_hook(module, input):

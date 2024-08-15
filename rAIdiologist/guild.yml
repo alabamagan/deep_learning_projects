@@ -15,6 +15,9 @@
         training/validation_loss: 'VAL: (\value)'
         step: 'Epoch (\step)'
         training/step_lr: 'LR: (\value)'
+        AUC: 'OverallAUC: (\value)'
+        sensitivity: 'Sensitivity: (\value)'
+        specificity: 'Specificity: (\value)'
       requires:
         - default
 
@@ -110,13 +113,16 @@
           target-type: 'link'
         - copy-checkpoint-pretrain
 
-#      pretrain_pipeline:
-#      flags:
-#        net_name: 'rai_v1'
-#        debug_mode: no
-#      steps:
-#        - run: pretrain controller_cfg.net_name=${net_name} controller_cfg.debug_mode=${debug_mode}
-#        - run: pretrain-validation
+    pretrain-pipeline:
+      flags:
+        cnn_drop:
+          env-name: cnn_drop
+          default: 0.2
+      flags-dest: config:rAIdiologist/config/flags/flags.yaml
+      flags-import: all
+      steps:
+        - run: pretrain cnn_drop=${cnn_drop}
+        - run: pretrain-validation
 
   sourcecode:
     root: ./

@@ -31,6 +31,7 @@ class rAIController(PMIController):
         # * Pass attribute from controller to solver
         # passing the network checkpoint, this is needed because guild flags are not optimized
         self.solver_cfg.rAI_pretrained_CNN = self.cfg.rAI_pretrained_CNN
+        self.solver_cfg.net_name = self.net_name
 
 
     def exec(self):

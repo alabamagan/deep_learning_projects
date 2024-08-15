@@ -3,8 +3,10 @@ from pytorch_med_imaging.solvers import BinaryClassificationSolver, Classificati
 from pytorch_med_imaging.inferencers import BinaryClassificationInferencer, ClassificationInferencer
 from rAIdiologist.config.rAIdiologistCFG import *
 from rAIdiologist.config.network import *
+from rAIdiologist.config.loss import *
 from rAIdiologist.rai_main import *
 from rAIdiologist.rai_controller import rAIController
+
 import yaml
 import logging
 import torch
@@ -13,7 +15,12 @@ import torch.multiprocessing as mp
 import click
 import copy
 from mnts.mnts_logger import MNTSLogger
+
+# This is now the network is created
 global rai_options
+
+# Setup metadata for neptune
+import neptune
 
 
 @click.command()
@@ -57,26 +64,11 @@ def main(inference, ddp, pretrain):
 
         # override network by guild flags
         controller.solver_cfg.net = rai_options['networks'][controller.net_name]
-
-        # * checkoutput channel
-        for m in controller.solver_cfg.net.modules():
-            last_module = m
-        if isinstance(last_module, nn.Linear):
-            out_dim = last_module.weight.shape[0]
-            if out_dim > 1 and pretrain:
-                # When in pretrain mode (i.e., mode = 0), the solver needs to change,
-                # if larger than 1, we can't use binary classification solver
-                controller._logger.info("Forcing solver to be `ClassificationSolver`")
-                # controller.solver_cls = ClassificationSolver
-                # controller.inferencer_cls = ClassificationInferencer
-                controller.solver_cfg.rAI_classification = True
-                controller.solver_cfg.loss_function = torch.nn.CrossEntropyLoss(weight=torch.FloatTensor([0.5, 1.2]))
-            else:
-                # Otherwise in training mode, we only need to change the loss function to CrossEntropy
-                controller._logger.info("Invoking rAIdiologist in Classification mode instead "
-                                        "of binary classification.")
-                controller.solver_cfg.rAI_classification = True
-                controller.solver_cfg.loss_function = torch.nn.CrossEntropyLoss(weight=torch.FloatTensor([0.5, 1.2]))
+        if controller.solver_cfg.rAI_classification:
+            # When in pretrain mode (i.e., mode = 0), the solver needs to change,
+            # if larger than 1, we can't use binary classification solver
+            controller._logger.info("Forcing loss function to be CrossEntropyLoss")
+            controller.solver_cfg.loss_function = ConfidenceCELoss(weight=torch.FloatTensor([0.5, 1.2]), lambda_1=0.05, lambda_2=0.)
         controller.exec()
     else:
         # run DDP
@@ -86,6 +78,13 @@ def main(inference, ddp, pretrain):
             raise ArithmeticError(msg)
 
         mp.spawn(DDP_helper.ddp_helper, args=(world_size, copy.deepcopy(cfg), 'flags.yaml',), nprocs=world_size)
+
+    # run inference after training
+    if not inference:
+        controller.cfg.run_mode = 'inference'
+        controller = rAIController(controller.cfg)
+        controller.exec()
+
 
 
 if __name__ == '__main__':

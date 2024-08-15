@@ -9,6 +9,7 @@ import torch.nn as nn
 from typing import Union, Any
 from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolverCFG, ClassificationSolver
 from ..config.network.rAIdiologist import rAIdiologist
+from ..config.loss.rAIdiologist_loss import ConfidenceCELoss
 import gc
 
 __all__ = ['rAIdiologistSolver']
@@ -16,7 +17,7 @@ __all__ = ['rAIdiologistSolver']
 
 class rAIdiologistSolverCFG(ClassificationSolverCFG):
     r"""
-    Class Attributes:
+    Attributes:
         rAI_fixed_mode (int):
             Select from mode 1 - 5. Otherwise the mode will automatically progress based on the total epoch number
             and the current epoch number. Default to ``None``.
@@ -44,7 +45,12 @@ class rAIdiologistSolverCFG(ClassificationSolverCFG):
 class rAIdiologistSolver(BinaryClassificationSolver):
     r"""This solver is written to train :class:`rAIdiologist` network. This mainly inherits :func:`._epoch_prehook` to
     set the network mode based on the current epoch number. This also customize :func:`_build_validation_df` to present
-    the results better. """
+    the results better.
+
+    .. note::
+        If `self.rAI_classification` is set to True, the solver will pass some function to ClassificationSolver because
+        the output of the network is expect to be multi-class classification.
+    """
     def __init__(self, cfg, *args, **kwargs):
         super(rAIdiologistSolver, self).__init__(cfg, *args, **kwargs)
 
@@ -82,14 +88,24 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         by the network. In mode 0, the output shape is (B x 1)"""
 
         # res: (B x S x C)/(B x S x 1)/B x (S x C), g: (B x 1)
-        if isinstance(self.loss_function, nn.CrossEntropyLoss):
-            return super(BinaryClassificationSolver, self)._build_validation_df(g, res, uid)
+        if self.rAI_classification:
+            if isinstance(self.loss_function, ConfidenceCELoss) and isinstance(res, (list, tuple)):
+                pred, conf = res
+                _df = pd.DataFrame.from_dict({f'res_{d}': list(pred[:, d].numpy())
+                                              for d in range(pred.shape[-1])})
+                _df_gt = pd.DataFrame.from_dict({'gt': list(g.flatten().numpy())})
+                _df_conf = pd.DataFrame.from_dict({'conf': list(conf.flatten().numpy())})
+                _df = pd.concat([_df, _df_conf, _df_gt], axis=1)
+                _df['predicted'] = torch.argmax(pred.squeeze(), dim=1).numpy()
+                _df['eval'] = (_df['predicted'] == _df['gt']).replace({True: 'Correct', False: 'Wrong'})
+                return _df, _df['predicted']
+            else:
+                return super(BinaryClassificationSolver, self)._build_validation_df(g, res, uid)
         else:
             g = g.detach().cpu()
             res = res.detach().cpu()
-            chan = res.shape[-1] # if chan > 1, there is a value for confidence
-            if res.dim() == 3:
-                res = res[:, -1]
+
+            chan = res.shape[1] # if chan > 1, there is a value for confidence
             _data =np.concatenate([res.view(-1, chan).data.numpy(), g.data.view(-1, 1).numpy()], axis=-1)
             _df = pd.DataFrame(data=_data, columns=['res_%i'%i for i in range(chan)] + ['g'])
             _df['Verify_wo_conf'] = (_df['res_0'] >= 0) == (_df['g'] > 0)
@@ -110,6 +126,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
 
             # res: (B x C)/(B x 1)
             if chan > 1:
+                res = res.squeeze()
                 dic = torch.zeros_like(res[..., 0])
                 dic = dic.type_as(res).int() # move to cuda if required
                 dic[torch.where(res[..., 0] >= 0)] = 1
@@ -125,12 +142,25 @@ class rAIdiologistSolver(BinaryClassificationSolver):
 
     def _align_g_res_size(self, g, res):
         # g: (B x 1), res is either (B x S x C)) or (B x C)
-        if isinstance(self.loss_function, nn.CrossEntropyLoss):
-            return super(BinaryClassificationSolver, self)._align_g_res_size(g, res)
+        if self.rAI_classification:
+            if isinstance(res, (tuple, list)):
+                # in model > 1 output is expected to be a tuple
+                res_pred, res_conf = res
+                g, res_pred = super(BinaryClassificationSolver, self)._align_g_res_size(g, res_pred)
+                return g, (res_pred, res_conf)
+            else:
+                return super(BinaryClassificationSolver, self)._align_g_res_size(g, res)
         else:
             g = g.squeeze()
-            if res.dim() == 1:
-                res = res.view(-1, 1)
+
+            # make sure the dimension is correct
+            if isinstance(res, (tuple, list)):
+                res = [r.view(-1, 1) for r in res]
+            elif res.dim() == 3:
+                # Assume output is stack of prediction and confidence
+                res = res.view(-1, 2, 1)
+            else:
+                res = res.view(-1,1)
             return g.view(-1, 1), res
 
     def _epoch_prehook(self, *args, **kwargs):
@@ -167,17 +197,23 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         # Save current train mode
         original_mode = self.get_net()._mode.item()
         if original_mode > 3:
+            self._logger.info(f"Setting rAIdiologist mode to from {original_mode} -> -1 for validation.")
             self._set_net_mode(-1) # inference when not pretraining (i.e., mode = 0)
         super(rAIdiologistSolver, self).validation()
+        self._logger.info(f"Setting rAIdiologist mode back to {original_mode}")
         self._set_net_mode(original_mode)
 
     def _validation_step_callback(self, g: torch.Tensor, res: torch.Tensor, loss: Union[torch.Tensor, float],
                                   uids=None) -> None:
         r"""Uses :attr:`perf` to store the dictionary of various data."""
-        if isinstance(self.loss_function, nn.CrossEntropyLoss):
+        if self.rAI_classification:
+            # Unpack the tuple first
+            if isinstance(self.loss_function, ConfidenceCELoss) and isinstance(res, (list, tuple)):
+                res, conf = res
             return super(BinaryClassificationSolver, self)._validation_step_callback(g, res, loss, uids)
 
         self.validation_losses.append(loss.item())
+        # Initialize list
         if len(self.perfs) == 0:
             self.perfs.append({
                 'dics'       : [],
@@ -202,8 +238,58 @@ class rAIdiologistSolver(BinaryClassificationSolver):
             store_dict['uids'].extend(uids)
             
     def _validation_callback(self) -> None:
-        if isinstance(self.loss_function, nn.CrossEntropyLoss):
+        if self.rAI_classification:
             return super(BinaryClassificationSolver, self)._validation_callback()
         else:
             return super(rAIdiologistSolver,self)._validation_callback()
-        
+
+    def _loss_eval(self, *args):
+        r"""Copy from :class:`ClassificationSolver` with some modificaiton to cater for the change in network output
+        format, which is now a tuple, not just a tensor.
+        """
+        out, s, g = args
+
+        s = self._match_type_with_network(s)
+        g = self._match_type_with_network(g)
+
+        g, out = self._align_g_res_size(g, out)
+
+        if self.ordinal_class:
+            if not isinstance(self.loss_function, CumulativeLinkLoss):
+                msg = f"For oridinal_class mode, expects `CumulativeLinkLoss` as the loss function, got " \
+                      f"{type(self.loss_function)} instead."
+                raise AttributeError(msg)
+
+        if self.ordinal_mse and not isinstance(self.loss_function, nn.SmoothL1Loss):
+                msg = f"For oridinal_mse mode, expects `SmoothL1Loss` as the loss function, got " \
+                      f"{type(self.loss_function)} instead."
+                raise AttributeError(msg)
+
+        # required dimension of CrossEntropy is either (B) or (B, num_class)
+        if isinstance(self.loss_function, (nn.CrossEntropyLoss, ConfidenceCELoss)):
+            # squeeze (B, 1) to (B)
+            g = g.squeeze()
+
+        # self._logger.debug(f"Output size out: {out.shape}({out.dtype}) g: {g.shape}({g.dtype})")
+        # Cross entropy does not need any processing, just give the raw output
+        loss = self.loss_function(out, g)
+        return loss
+
+    def _step_callback(self, s, g, out, loss, uid=None, step_idx=None) -> None:
+        r"""Copy from :class:`ClassificationSolver` with some modificaiton to cater for the change in network output.
+
+        See Also:
+            * :class:`ClassificationSolver`
+        """
+        # Print step information
+        _df, _ = self._build_validation_df(g, out, uid=uid)
+        self._logger.debug('\n' + _df.to_string())
+
+        # These are used for specific network and will be move to other places soon.
+        if hasattr(self.net, 'module'):
+            if hasattr(self.net.module, '_batch_callback'):
+                self.net.module._batch_callback()
+                self._logger.debug(f"LCL:{self.net.module.LCL.cutpoints}")
+        elif hasattr(self.net, '_batch_callback'):
+            self.net.module._batch_callback()
+            self._logger.debug(f"LCL:{self.net.module.LCL.cutpoints}")
