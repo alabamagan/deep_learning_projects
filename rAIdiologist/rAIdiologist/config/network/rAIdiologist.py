@@ -2,17 +2,46 @@ import warnings
 import os
 from typing import Any, Mapping
 
+import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_sequence
 import copy
 from .lstm_rater import LSTM_rater, Transformer_rater
-from .slicewise_ran import SlicewiseAttentionRAN, RAN_25D
+from .slicewise_ran import SlicewiseAttentionRAN, RAN_25D, SWRAN_Block
 from .old.old_swran import SlicewiseAttentionRAN_old
 from .ViT3d.models import ViTVNetImg2Pred, CONFIGS
 from mnts.mnts_logger import MNTSLogger
 import types
+
+
+class DropPatch(nn.Module):
+    r"""This module is a dropout module that drops an entire patch from a (B x C x S)
+    sequence vector that is meant as an input for a transformer module. """
+    def __init__(self, prob = 0):
+        super().__init__()
+        self.prob = prob
+
+    def forward(self, x):
+        r"""This drops a patch instead of a
+
+        Args:
+            x (torch.Tensor):
+                Input chain that is going to be procesed by transformer
+
+        .. note::
+            - This function assumes `batch_first` option is true.
+        """
+        device = x.device
+
+        # Skip if in eval mode
+        if self.prob == 0. or (not self.training):
+            return x
+
+        keep_mask = torch.rand((1, 1, x.shape[2])).uniform_().to(device) > self.prob
+        return x * keep_mask.expand_as(x)
+
 
 class rAIdiologist(nn.Module):
     r"""
@@ -302,10 +331,7 @@ class rAIdiologist_Transformer(rAIdiologist):
         rnn_dropout = float(os.getenv('rnn_drop', None) or rnn_dropout)
 
         # * Define CNN and RNN
-        # TODO: Debug for the following
-        # - There's a fixed prediction during inference
-        # - The network does not converge at all
-        cnn = SlicewiseAttentionRAN(in_ch, out_ch, dropout=cnn_dropout, return_top=True)
+        cnn = SWRAN_Block(in_ch, out_ch, dropout=cnn_dropout, return_top=True, sigmoid_out=False, grid_size=[8,8])
         rnn = Transformer_rater(in_ch=2048, dropout=rnn_dropout, out_ch=out_ch)
 
         # Useless variables
@@ -313,6 +339,8 @@ class rAIdiologist_Transformer(rAIdiologist):
         # - bidirectional
         super().__init__(out_ch, record, 5, cnn_dropout, rnn_dropout, False, mode, reduce_strats,
                          custom_cnn=cnn, custom_rnn=rnn)
+        self.dropout = DropPatch(cnn_dropout)
+
 
     def collect_playback(self, reduced_x, x_play_back) -> None:
         r"""Return the self attention tensor from transformer. No need extra processing.
@@ -332,8 +360,12 @@ class rAIdiologist_Transformer(rAIdiologist):
     def forward_(self, x):
         r"""Override to change the default behavior, the follwoing changes were made to cater with the use of
         transformer:
-        - the first and the last slice of the image is not discarded.
-        - changed to use einops for more intuitive operation
+
+        .. note::
+            - the first and the last slice of the image is not discarded.
+            - changed to use einops for more intuitive operation
+            - [2024-07-09]
+                - Add confidence weighting obtained from transformer.
 
         Expected input: (B x C x H x W x S)
         """
@@ -344,28 +376,36 @@ class rAIdiologist_Transformer(rAIdiologist):
 
         # It is expected the output for the cnn part is already zero padded for inputs with different number of slices.
         nonzero_slices, top_slices = RAN_25D.get_nonzero_slices(x.detach().cpu())
+        reduced_x, x = self.cnn(x)     # Shape -> x: (B x 2048 x (grid_size * S)); reduced_x: (B x C)
+        _, __, h, w, _ = x.shape
+        x = self.dropout(einops.rearrange(x, 'b c h w s -> b c (s w h)'))
 
-        reduced_x, x = self.cnn(x)     # Shape -> x: (B x 2048 x S); reduced_x: (B x 1)
-        x = self.dropout(x)
         while x.dim() < 3:
             x = x.unsqueeze(0)
 
         if self.RECORD_ON and not self.training:
             # make a copy of cnn-encoded slices if record on.
             x_play_back = x.detach()
-        x = x.permute(0, 2, 1).contiguous() # (B x C x S) -> (B x S x C)
+        x = einops.rearrange(x, 'b c s ->  b s c')
 
         # o: (B x S x out_ch)
-        o = self.rnn(x[:, 1:],  # discard the first and last slice because CNN kernel is [3x3x3]
-                     torch.as_tensor(top_slices).int() - 1) # -1 discard the last slice
+        o = self.rnn(x[:, h * w:],  # discard the first and last slice because CNN kernel is [3x3x3]
+                     torch.as_tensor(top_slices).int() * h * w - 1) # -1 discard the last slice
         if self.RECORD_ON and not self.training:
             self.collect_playback(reduced_x, x_play_back)
 
-        if self.training:
-            return self.get_prediction_train(o)
+        # use rnn prediction to decide if cnn prediction needs to be revoked
+        if self._mode == 1:
+            # train RNN only
+            return self.rnn.get_prediction_from_output(o)
         else:
-            out = self.inference_forward(B, o)
-            return out
+            # merge CNN and RNN results
+            conf_rnn = self.rnn.get_confidence_from_output(o) # (conf: B x 1)
+            conf_rnn = torch.clip(torch.sigmoid(conf_rnn), 0.2, 0.8)
+            conf_cnn = -conf_rnn + 1
+            # Output (B x 2 x 1)
+            return torch.stack([(conf_rnn * self.rnn.get_prediction_from_output(o) + conf_cnn * reduced_x), conf_rnn],
+                                dim=1)
 
     def forward(self, *args):
         if self._mode == 0:
@@ -394,6 +434,11 @@ class rAIdiologist_Transformer(rAIdiologist):
         """
         return x[:, 0]
 
+    def get_confidence_train(self, x: torch.Tensor) -> torch.Tensor:
+        r"""For transformer when the network operates in full training mode, the output is the concatenation of
+        predictiona and confidence.
+        """
+        return x[:, 1]
 
 def create_rAIdiologist_v1():
     return rAIdiologist(1, 1, cnn_dropout=0.1, rnn_dropout=0.1)
@@ -436,7 +481,7 @@ def create_rAIdiologist_v5():
 
 def create_rAIdiologist_v5_1():
     r"""This version does output channel = 2"""
-    return rAIdiologist_Transformer(1, 2)
+    return rAIdiologist_Transformer(1, 1)
 
 def create_old_rAI():
     cnn = SlicewiseAttentionRAN_old(1, 1, exclude_fc=False, return_top=False)

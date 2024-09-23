@@ -28,7 +28,7 @@ class SlicewiseAttentionRAN_old(nn.Module):
             If `True`, the output FC layer would be excluded.
 
     """
-    def __init__(self,
+    def     __init__(self,
                  in_ch: int,
                  out_ch: int,
                  first_conv_ch : Optional[int]   = 64,

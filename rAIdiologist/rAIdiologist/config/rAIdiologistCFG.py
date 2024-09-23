@@ -72,7 +72,7 @@ class MySolverCFG(rAIdiologistSolverCFG):
 
     plot_to_tb        = True
     early_stop        = 'loss_reference'
-    early_stop_kwargs = {'warmup'       : 150, 'patience': 15}
+    early_stop_kwargs = {'warmup'       : 5, 'patience': 10}
     accumulate_grad   = 0
 
     # lr_sche = 'ExponentialLR'
@@ -85,10 +85,11 @@ class MySolverCFG(rAIdiologistSolverCFG):
     rAI_inf_save_playbacks = True
 
     loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([1.2]),
-                                      conf_factor=1.2,
-                                      conf_pos_weight=0.1)
+                                      conf_weight=0.5,
+                                      over_conf_weight=0.05)
 
-id_list_dir = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold"
+# id_list_dir = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold"
+id_list_dir = "./NPC_Segmentation/99.Testing/NPC_Screening/rai_v5.1/"
 # id_list_dir = "./NPC_Segmentation/99.Testing/NPC_Screening/v3"
 class MyControllerCFG(PMIControllerCFG):
     run_mode    = 'training'

@@ -205,7 +205,7 @@ class LSTM_rater(nn.Module):
 
 
 class Transformer_rater(nn.Module):
-    r"""This Transformer rater is a Transformer encoder that accepts (B x L x C) input and output (B x L+1 x C). A
+    r"""This Transformer rater is a Transformer encoder that accepts (B x L x C) input and output (B x L+2 x C). A
     classification token is prepended to the input sequence, where the transformer will try to generate the output
 
     This module also offers to record the predicted score, confidence score and which slice they are deduced. The
@@ -221,22 +221,27 @@ class Transformer_rater(nn.Module):
         # Note that batch_first is not set to `True` here because Transformer Encoder doesn't work like that
         trans_encoder_layer = TransformerEncoderLayerWithAttn(d_model=in_ch, nhead=32, dim_feedforward=embed_ch,
                                                               dropout=dropout, need_weights=record)
-        self.embedding = nn.TransformerEncoder(trans_encoder_layer, num_layers=10)
+        self.embedding = nn.TransformerEncoder(trans_encoder_layer, num_layers=20)
+
+        # Input layer norm
+        self.in_layer = nn.LayerNorm(in_ch)
 
         # position encoding
-        self.pos_encoder = PositionalEncoding(d_model=in_ch, max_len=50, dropout=dropout / 2.)
+        self.pos_encoder = PositionalEncoding(d_model=in_ch, max_len=5000, dropout=0)
 
-        # Learnable classification token
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, in_ch, dtype=torch.float))
+        # Learnable classification and confidence token
+        self.cls_token = nn.Parameter(torch.rand(1, 1, in_ch, dtype=torch.float))
+        self.conf_token = nn.Parameter(torch.rand(1, 1, in_ch, dtype=torch.float))
 
         # Final dropout before output layer
         self.dropout = nn.Dropout(p=dropout)
 
         # Output layer
+        #! Note that the creation order must be like this because solver checks the last output linear module
+        self.conf_out = nn.Linear(out_ch, 1, bias=False)
         self.out_fc = nn.Sequential(
-            nn.LayerNorm(embed_ch),
-            nn.LeakyReLU(inplace=True),
-            nn.Linear(embed_ch, out_ch)
+            nn.LayerNorm(embed_ch, elementwise_affine=True),
+            nn.Linear(embed_ch, out_ch, bias=True)
         )
 
         # for playback
@@ -293,19 +298,24 @@ class Transformer_rater(nn.Module):
         max_slice = x.shape[1]
         batch_size = x.shape[0]
 
-        # * Create mask for zero paddings (1 means ignored), +1 because of cls_token
+        # * Create mask for zero paddings (1 means ignored), +2 because of cls_token & conf token
         # note that for some reason, transformer wants (b s) instead of (s b) despite note setting batch first
-        src_key_padding_mask = torch.zeros(batch_size, max_slice+1, dtype=bool)
+        src_key_padding_mask = torch.zeros(batch_size, max_slice+2, dtype=bool)
         for i, top in enumerate(topslices):
             src_key_padding_mask[i, top:].fill_(True)
         src_key_padding_mask = src_key_padding_mask.to(x.device)
 
+        # Input layer norm after encoder
+        x = self.in_layer(x)
+
         # Transformer batch_first was not set to True, so we have to permute it
         x = rearrange(x, 'b s c -> s b c')
-        cls = rearrange(self.cls_token, 'b s c -> s b c').expand([1, batch_size, -1])
+        cls = rearrange(self.cls_token , 'b s c -> s b c').expand([1, batch_size, -1])
+        conf= rearrange(self.conf_token, 'b s c -> s b c').expand([1, batch_size, -1])
+
 
         # Now prepend the cls token (S x B x C)
-        x = torch.cat([cls, x], dim=0)
+        x = torch.cat([cls, conf, x], dim=0)
 
         # Perform pos-embedding
         x = self.pos_encoder(x)
@@ -333,14 +343,32 @@ class Transformer_rater(nn.Module):
     def get_playback(self):
         return self.play_back
 
-    def get_prediction(self, *args: Any) -> torch.Tensor:
-        pass
+    def get_prediction_from_output(self, x: torch.Tensor) -> torch.Tensor:
+        r"""This is a function for getting the results from the classification token
+
+        Args:
+            x (torch.Tensor): Input tensor. Dimensions are (B x S x C).
+        """
+        return x[:, 0]
+
+    def get_confidence_from_output(self, x: torch.Tensor) -> torch.Tensor:
+        r"""This is a function for getting the results from the confidence token. This returns two values, one is
+        the weight for CNN results, the other is the weight for RNN results.
+
+        .. note::
+           This function does not add Sigmoid to the output, and you should do it yourselves. It is also recommended
+           that you should add clipping to confine the range of the weights.
+
+        Args:
+            x (torch.Tensor): Expected dimension is (B x S x C)
+        """
+        return self.conf_out(x[:, 1])
 
 
 class TransformerEncoderLayerWithAttn(nn.TransformerEncoderLayer):
     def __init__(self, *args,  need_weights = False, **kwargs):
         super(TransformerEncoderLayerWithAttn, self).__init__(*args,**kwargs)
-        self.need_weights = need_weights
+        self._need_weights = need_weights
         self.attn_playback = []
 
     def forward(self, src, src_mask=None, src_key_padding_mask=None, **kwargs):

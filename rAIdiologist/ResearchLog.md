@@ -39,7 +39,37 @@ The possibiltiy of using transformer is being tested currently. The input of the
 
 #### Using ADAM
 
-| Hyperparam    | Value        |
-|---------------|--------------|
-| Learning Rate | 1E-7 to 5E-7 |
-| Init Momentum | 0.99         |
+| Hyperparam    | Value                 |
+|---------------|-----------------------|
+| Learning Rate | ~~1E-7 to 5E-7~~ 1E-5 |
+| Init Momentum | 0.99                  |
+
+**[04/06/2024-Matthew]**:  Note that I found I previously set the learning rate of cnn and rnn to be weighted using the code below, it is therefore estimated the rate between RNN and CNN is 2:10. I now implemented a more general option to control this by allowing an attribute `lr_weights` in the network that modifies the behavior of `optimizer_set_params()` method.  
+
+```python
+# Method of rAIdiologistSolver
+def optimizer_set_params(self):
+    r"""The learning rate of RNN and CNN are inherently different, and we can't use the same for both and train
+    them together. Therefore, this method is overrided to tune the factor."""
+    if not isinstance(self.get_net(), rAIdiologist):
+        super().optimizer_set_params()
+    else:
+        net = self.net
+        lstm_factor = os.getenv('lstm_initlr_factor', 5)
+        assert isinstance(net, rAIdiologist), "Incorrect network setting."
+        args = [
+            {"params": net.cnn.parameters(), "lr": self.init_lr},
+            {"params": net.lstm_rater.parameters(), "lr": self.init_lr * 5},
+        ]
+    ...
+
+```
+
+**[13/06/2024-Matthew]**: The network is now given a new attribute "lr_weights", which can be used to control the weight
+factor of each individual module. Implementation of changes was mainly in solver, when setting the network into the 
+optimizer. If both CNN and RNN are being trained from scratch, the convergence is difficult. If only RNN is being 
+trained, you can use the parameters above. Otherwise, there's high risk of overfitting.
+
+**[07/07/2024-Matthew]**: Although the network converges with the new configuration, the performance still tops at around
+0.966 AUC, this is less than the previous versions of the network. Therefore, I am adding back the confidence factor 
+that will help merge the CNN and RNN outputs.

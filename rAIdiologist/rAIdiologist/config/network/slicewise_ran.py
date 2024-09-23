@@ -10,7 +10,6 @@ from  pytorch_med_imaging.networks.third_party_nets.spacecutter import LogisticC
 import pprint
 
 
-__all__ = ['SlicewiseAttentionRAN', 'RAN_25D']
 
 class RAN_25D(nn.Module):
     r"""This is a 2.5D network that will process the image volume and give a prediction of specified channel.
@@ -74,9 +73,9 @@ class RAN_25D(nn.Module):
         # Note: using the same dropout rate might cause the network unable to converge because the zeros from
         #       high level dropouts propagates to low level layers, which also does dropout. If the drop out
         #       is too high, there will be too much zeros in the low level layers.
-        self.in_conv2  = ResidualBlock3d(first_conv_ch, 256 ,                )
+        self.in_conv2  = ResidualBlock3d(first_conv_ch, 256, p = dropout)
         self.att1      = AttentionModule_25d(256      , 256 , stage = 0      )
-        self.r1        = ResidualBlock3d(256          , 512 , p     = dropout / 8.)
+        self.r1        = ResidualBlock3d(256          , 512 , p     = dropout / 4.)
         self.att2      = AttentionModule_25d(512      , 512 , stage = 1      )
         self.r2        = ResidualBlock3d(512          , 1024, p     = dropout / 4.)
         self.att3      = AttentionModule_25d(1024     , 1024, stage = 2      )
@@ -300,15 +299,10 @@ class SlicewiseAttentionRAN(RAN_25D):
 
         x = self.in_conv1(x)
 
-
         # Construct slice weight
         x_w = self.in_sw(x).view(B, -1)
         if self.save_weight:
             self.x_w = x_w.data.cpu()
-
-        # Permute the axial dimension to the last
-        x = F.max_pool3d(x, [2, 2, 1], stride=[2, 2, 1])
-        x = x * einops.rearrange(x_w, 'b sc -> b 1 1 1 sc').expand_as(x)
 
         # Resume dimension
         x = self.in_conv2(x)
@@ -318,6 +312,11 @@ class SlicewiseAttentionRAN(RAN_25D):
         x = self.att2(x)
         x = self.r2(x)
         x = self.att3(x)
+
+        # * Apply slicewise weight before final conv
+        # Permute the axial dimension to the last
+        x = F.max_pool3d(x, [2, 2, 1], stride=[2, 2, 1])
+        x = x * einops.rearrange(x_w, 'b sc -> b 1 1 1 sc').expand_as(x)
 
         x = self.out_conv1(x)
         # order of slicewise attention and max pool makes no differences because pooling is within slice
@@ -352,3 +351,76 @@ class SlicewiseAttentionRAN(RAN_25D):
         else:
             print("Attention weight was not saved!")
             return None
+
+
+class SWRAN_Block(SlicewiseAttentionRAN):
+    def __init__(self, *args, grid_size=[4, 4], **kwargs):
+        r"""
+        Args:
+            grid_size (list of int):
+                The grid size for adaptive maxpool. Performance would be better if the original
+                image dimension is divisible by the specified grid_size.
+
+        See Also:
+              :class:`SlicewiseAttentionRAN`
+
+        """
+        super().__init__(*args, **kwargs)
+        in_ch = args[0]
+        first_conv_ch = kwargs.get('first_conv_ch', 64)
+        self.pre_top_maxpool = nn.AdaptiveMaxPool3d((*grid_size, None))
+        self.in_conv1 = Conv3d(in_ch, first_conv_ch, kern_size=[3, 3, 1], stride=[1, 1, 1], padding=[1, 1, 0])
+
+
+    def forward(self, x):
+        r"""Expect input (B x in_ch x H x W x S), output (B x out_ch)"""
+        B = x.shape[0]
+        while x.dim() < 5:
+            x = x.unsqueeze(0)
+        nonzero_slice, _ = self.get_nonzero_slices(x)
+
+        x = self.in_conv1(x)
+
+        # Construct slice weight
+        x_w = self.in_sw(x).view(B, -1)
+        if self.save_weight:
+            self.x_w = x_w.data.cpu()
+
+        # Resume dimension
+        x = F.max_pool3d(x, [2, 2, 1], stride=[2, 2, 1])
+        x = self.in_conv2(x)
+
+        x = self.att1(x)
+        x = self.r1(x)
+        x = self.att2(x)
+        x = self.r2(x)
+        x = self.att3(x)
+
+        # * Apply slicewise weight before final conv
+        # Permute the axial dimension to the last
+        x = F.max_pool3d(x, [2, 2, 1], stride=[2, 2, 1])
+        x = x * einops.rearrange(x_w, 'b sc -> b 1 1 1 sc').expand_as(x)
+
+        x = self.out_conv1(x)
+        x = self.pre_top_maxpool(x) # this is for designed for ViT
+
+        if x.dim() < 3:
+            x = x.unsqueeze(0)
+
+        if not self.exclude_top:
+            if self.return_top:
+                sw_prediction = x
+            x = self.forward_top(B, nonzero_slice, x)
+        if self.sigmoid_out:
+            x = torch.sigmoid(x)
+        if self.return_top:
+            return x, sw_prediction
+        else:
+            return x
+
+    def forward_top(self, B, nonzero_slice, x) -> torch.Tensor:
+        # expect input x: (B x C x S)
+        x = F.adaptive_max_pool3d(x, [1, 1, None]).squeeze(2,3)
+        return super().forward_top(B, nonzero_slice, x)
+
+
