@@ -103,8 +103,8 @@ class MyControllerCFG(PMIControllerCFG):
     rAI_pretrained_CNN = './Backup/rAIdiologist_{fold_code}_pretrain.pt'
 
     _data_loader_cfg     = data_loader
-    _data_loader_inf_cfg = data_loader_inf
-    data_loader_val_cfg  = data_loader_inf
+    _data_loader_inf_cfg = data_loader_inf # inference need different dataloader
+    data_loader_val_cfg  = data_loader_inf # validation set comes from the same folder as testing set
     data_loader_cls      = PMIImageFeaturePairLoader
 
     solver_cfg     = MySolverCFG()
