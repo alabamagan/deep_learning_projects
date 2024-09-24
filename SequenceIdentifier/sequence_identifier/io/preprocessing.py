@@ -22,6 +22,10 @@ def flatten_img(img: sitk.Image) -> sitk.Image:
     Performs a mean intensity projection along the largest dimension
     of the image.
 
+    .. note::
+        If the spacing is equal, i.e, the scan is a 3D scan, the first
+        axis will be squashed.
+
     Args:
         img (sitk.Image):
             The input image to be flattened.
@@ -38,6 +42,34 @@ def flatten_img(img: sitk.Image) -> sitk.Image:
     # Perform maximum intensity projection along the largest dimension
     im_flattened = sitk.MeanProjection(img, int(max_dim))
     return im_flattened
+
+
+def flatten_nifti(folder: Path,
+                  id_globber: Optional[str] = r'[A-Za-z]*[0-9]+',
+                  num_workers: Optional[int] = 1) -> Dict[str, sitk.Image]:
+    output = {}
+    # read all nifti files
+    with MNTSLogger('flatten_nifti') as logger:
+        logger.info(f"Working on {str(folder)}")
+
+        # glob all nifti files
+        fnames = folder.rglob("*.nii.gz")
+
+        # for each file, assume their spacing are correct, flattens it
+        for nii_file in fnames:
+            logger.info(f"Flattening with MIP: {nii_file.name}")
+            # Extract the ID from the file name using a regular expression
+            id = re.search(id_globber, nii_file.name).group()
+
+            # Read the NIfTI image file
+            im = sitk.ReadImage(str(nii_file))
+
+            # flattens it
+            im_flattened = flatten_img(im)
+
+            # Store the flattened image in the output dictionary with the extracted ID as the key
+            output[id + "/" + nii_file.name] = im_flattened
+    return output
 
 
 def flatten_dcm(folder: Path,
@@ -89,20 +121,7 @@ def flatten_dcm(folder: Path,
             dump_meta_data=True
         )
 
-
-        # Iterate over all .nii.gz files in the specified folder
-        for nii_file in Path(tmp_dir).rglob("*.nii.gz"):
-            logger.info(f"Flattening with MIP: {nii_file.name}")
-            # Extract the ID from the file name using a regular expression
-            id = re.search(id_globber, nii_file.name).group()
-
-            # Read the NIfTI image file
-            im = sitk.ReadImage(str(nii_file))
-
-            im_flattened = flatten_img(im)
-
-            # Store the flattened image in the output dictionary with the extracted ID as the key
-            output[id] = im_flattened
+        output.update(flatten_nifti(Path(tmp_dir)), id_globber=id_globber, num_workers=num_workers)
     logger.debug(f"{output = }")
     return output
 
