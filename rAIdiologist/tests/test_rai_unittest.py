@@ -49,19 +49,32 @@ class Test3DNetworks(unittest.TestCase):
     def test_input(self):
         with torch.no_grad():
             out = self.net(self.sample_input)
-            print(out.shape)
             try:
                 # Try to print the summary for convenience
                 summary(self.net, self.sample_input, show_input=True, print_summary=True, max_depth=2)
             except:
                 pass
-            self.expect_dim(out, self.EXPECTED_DIM)
+
+            # Expected output: torch.Tensor or Tuple[torch.Tensor]
+            if isinstance(out, torch.Tensor):
+                self.expect_dim(out, self.EXPECTED_DIM)
+            elif isinstance(out, (list, tuple)):
+                pred, conf = out
+                self.expect_dim(pred, self.EXPECTED_DIM)
+            else:
+                raise TypeError("Expected torch tensor output")
 
     def test_input_bsize_1(self):
         with torch.no_grad():
             out = self.net(self.sample_input_size1)
-            print(out.shape)
-            self.expect_dim(out, self.EXPECTED_DIM)
+            # Expected output: torch.Tensor or Tuple[torch.Tensor]
+            if isinstance(out, torch.Tensor):
+                self.expect_dim(out, self.EXPECTED_DIM)
+            elif isinstance(out, (list, tuple)):
+                pred, conf = out
+                self.expect_dim(pred, self.EXPECTED_DIM)
+            else:
+                raise TypeError("Expected torch tensor output")
 
 
 class TestOldSWRAN(Test3DNetworks):
