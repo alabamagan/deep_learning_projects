@@ -16,6 +16,30 @@ import tempfile
 import pprint
 
 
+def flatten_img(img: sitk.Image) -> sitk.Image:
+    """Flattens the image using mean intensity projection.
+
+    Performs a mean intensity projection along the largest dimension
+    of the image.
+
+    Args:
+        img (sitk.Image):
+            The input image to be flattened.
+
+    Returns:
+        sitk.Image:
+            The flattened image after mean intensity projection.
+
+    """
+    # Get the spacing of the image dimensions
+    im_shape = img.GetSpacing()
+    # Determine the index of the largest dimension
+    max_dim = np.argmax(im_shape)
+    # Perform maximum intensity projection along the largest dimension
+    im_flattened = sitk.MeanProjection(img, int(max_dim))
+    return im_flattened
+
+
 def flatten_dcm(folder: Path,
                 id_globber: Optional[str] = r'[A-Za-z]*[0-9]+',
                 num_workers: Optional[int] = 1) -> Dict[str, sitk.Image]:
@@ -23,7 +47,7 @@ def flatten_dcm(folder: Path,
     Converts DICOM series in a folder to flattened NIfTI images.
 
     Processes DICOM series found in the specified folder, converts them
-    to NIfTI format, and applies a maximum intensity projection to flatten
+    to NIfTI format, and applies an average intensity projection to flatten
     the images. The resulting images are stored in a dictionary with
     extracted IDs as keys.
 
@@ -33,7 +57,8 @@ def flatten_dcm(folder: Path,
         id_globber (Optional[str]):
             Optional regex pattern to match IDs from the filenames. Defaults
             to r'[A-Za-z]*[0-9]+'.
-
+        num_workers (Optional[int]):
+            Number of workers to use for processing. Defaults to 1.
 
     Returns:
         Dict[str, sitk.Image]:
@@ -74,14 +99,7 @@ def flatten_dcm(folder: Path,
             # Read the NIfTI image file
             im = sitk.ReadImage(str(nii_file))
 
-            # Get the spacing of the image dimensions
-            im_shape = im.GetSpacing()
-
-            # Determine the index of the largest dimension
-            max_dim = np.argmax(im_shape)
-
-            # Perform maximum intensity projection along the largest dimension
-            im_flattened = sitk.MaximumProjection(im, int(max_dim))
+            im_flattened = flatten_img(im)
 
             # Store the flattened image in the output dictionary with the extracted ID as the key
             output[id] = im_flattened
