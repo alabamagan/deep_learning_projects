@@ -38,8 +38,8 @@ data_loader = PMIImageFeaturePairLoaderCFG(
     )
 )
 
-# For inference
-data_loader_inf = PMIImageFeaturePairLoaderCFG(
+# For testing
+data_loader_test = PMIImageFeaturePairLoaderCFG(
     input_dir     = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/01.NyulNormalized/',
     probmap_dir   = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/00.HuangMask/',
     target_dir    = './NPC_Segmentation/99.Testing/NPC_Screening/v1/Datasheet_v2.csv',
@@ -56,6 +56,7 @@ data_loader_inf = PMIImageFeaturePairLoaderCFG(
         verbose                = True,
     )
 )
+
 
 class MySolverCFG(rAIdiologistSolverCFG):
     r"""This is created to cater for the configuration of rAIdiologist network"""
@@ -103,8 +104,8 @@ class MyControllerCFG(PMIControllerCFG):
     rAI_pretrained_CNN = './Backup/rAIdiologist_{fold_code}_pretrain.pt'
 
     _data_loader_cfg     = data_loader
-    _data_loader_inf_cfg = data_loader_inf # inference need different dataloader
-    data_loader_val_cfg  = data_loader_inf # validation set comes from the same folder as testing set
+    _data_loader_inf_cfg = data_loader_test # inference need different dataloader
+    data_loader_val_cfg  = data_loader_test # validation set comes from the same folder as testing set
     data_loader_cls      = PMIImageFeaturePairLoader
 
     solver_cfg     = MySolverCFG()
