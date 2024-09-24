@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 from pathlib import Path
 import pandas as pd
 import SimpleITK as sitk
-from sequence_identifier.io.preprocessing import flatten_dcm, make_datasheet
+import numpy as np
+from sequence_identifier.io.preprocessing import flatten_dcm, make_datasheet, flatten_img
 
 class TestPreprocessing(unittest.TestCase):
 
@@ -32,6 +33,27 @@ class TestPreprocessing(unittest.TestCase):
         self.assertIsInstance(result, dict)
         self.assertIsInstance(next(iter(result.values())), sitk.Image)
 
+    def test_flatten_img(self):
+        # Create a 3D image with spacing to control the largest dimension
+        img = sitk.Image([10, 20, 5], sitk.sitkUInt8)
+        img.SetSpacing([1.0, 0.5, 2.0])  # Z is the largest dimension
+
+        # Set pixel values to test average projection
+        array = sitk.GetArrayFromImage(img)
+        array[:, :, :] = 100  # Set all values to 100 for simplicity
+        img = sitk.GetImageFromArray(array)
+        img.SetSpacing([1.0, 0.5, 2.0])
+
+        # Perform the flattening
+        flattened_img = flatten_img(img)
+
+        # Check the shape of the output is as expected
+        expected_shape = (10, 20, 1)  # The largest dimension (Z) is projected out
+        self.assertEqual(flattened_img.GetSize(), expected_shape)
+
+        # Check that average intensity is calculated correctly
+        flattened_array = sitk.GetArrayFromImage(flattened_img)
+        self.assertTrue(np.all(flattened_array == 100))
 
 class TestMakeDatasheet(unittest.TestCase):
     def setUp(self):
