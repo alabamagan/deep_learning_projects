@@ -27,7 +27,11 @@ import neptune
 @click.option('--inference', default=False, is_flag=True, help="For guild operation")
 @click.option('--ddp', default=False, is_flag=True, help="For guild operation")
 @click.option('--pretrain', default=False, is_flag=True, help="For guild operation")
-def main(inference, ddp, pretrain):
+@click.option('--inference-dir', type=click.Path(exists=True, dir_okay=True), required=False,
+              help="Override inference directory.")
+@click.option('--id-globber', type=str, default=None,
+              help="Override id-globber for inference. Ignored for training.")
+def main(inference, ddp, pretrain, inference_dir, id_globber):
     if not pretrain:
         cfg = MyControllerCFG()
     else:
@@ -46,7 +50,22 @@ def main(inference, ddp, pretrain):
         if ddp:
             msg = "Inference mode can't run with DDP mode."
             raise ArithmeticError(msg)
+        # Put mode into inference
         cfg.run_mode = 'inference'
+
+        # override original data directory setting if force inference instead of doing testing set evaluation
+        if inference_dir is not None:
+            # create inference dataloader
+            data_loader_inf = PMIImageDataLoaderCFG(
+                input_dir = str(inference_dir),
+                id_globber = id_globber or cfg._data_loader_inf_cfg.id_globber,
+                augmentation  = cfg._data_loader_inf_cfg.augmentation
+            )
+            # Note that if both are set, inference assumes there's ground-truth data available
+            # and will attempt to load it even when its not correct
+            cfg._data_loader_cfg = data_loader_inf
+            cfg._data_loader_inf_cfg = None
+            cfg.data_loader_cls = PMIImageDataLoader
 
     # If pretrain, force mode open to 0, this was done in CFG already but just incase its not loaded properly
     if pretrain:
