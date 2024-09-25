@@ -120,14 +120,22 @@ def normalize_input(input_dir: Path,
         output_prefix = [f.name for f in input_fpaths] # name of output files
         input_vector = [output_prefix, [output_dir], input_fpaths]
         logger.debug(f"{pprint.pformat(input_vector)}")
+        job_length = len(list(repeat_zip(*input_vector)))
 
+        # create progress bar with correct length
+        G.set_progress_bar(job_length)
+
+        # set it to the graph G
         if num_workers <= 1:
             logger.info("Start processing input without parallelization.")
             for row in repeat_zip(*input_vector):
                 G.mpi_execute(*row)
         else:
             logger.info(f"Start processing input with {num_workers} workers.")
-            mpi_wrapper(partial(G.mpi_execute), input_vector, num_worker=num_workers)
+            mpi_wrapper(G.mpi_execute, input_vector, num_worker=num_workers)
+
+        # close progressbar
+        G.close_progress_bar()
 
 if __name__ == '__main__':
     normalize_input()
