@@ -120,6 +120,7 @@ class rAIdiologist(nn.Module):
             return super().state_dict(*args, **kwargs)
 
     def load_state_dict(self, *args, **kwargs):
+        r"""Escape to load state-dicts from CNN pre-training (mode = 0) and regular mode"""
         if self._mode == 0:
             return self.cnn.load_state_dict(*args, **kwargs)
         else:
@@ -324,14 +325,15 @@ class rAIdiologist(nn.Module):
 
 
 class rAIdiologist_Transformer(rAIdiologist):
-    def __init__(self, in_ch = 1, out_ch=2, record=False, cnn_dropout=0.15, rnn_dropout=0.1, bidirectional=False, mode=0,
+    def __init__(self, in_ch=1, out_ch=2, record=False, cnn_dropout=0.15, rnn_dropout=0.1, bidirectional=False, mode=0,
                  reduce_strats='max', custom_cnn=None, custom_rnn=None):
         # for guild hyper param tunning
         cnn_dropout = float(os.getenv('cnn_drop', None) or cnn_dropout)
         rnn_dropout = float(os.getenv('rnn_drop', None) or rnn_dropout)
 
         # * Define CNN and RNN
-        cnn = SWRAN_Block(in_ch, out_ch, dropout=cnn_dropout, return_top=True, sigmoid_out=False, grid_size=[8,8])
+        cnn = SWRAN_Block(in_ch, out_ch, dropout=cnn_dropout,
+                          return_top=True, sigmoid_out=False, grid_size=[8, 8])
         rnn = Transformer_rater(in_ch=2048, dropout=rnn_dropout, out_ch=out_ch)
 
         # Useless variables
@@ -341,17 +343,29 @@ class rAIdiologist_Transformer(rAIdiologist):
                          custom_cnn=cnn, custom_rnn=rnn)
         self.dropout = DropPatch(cnn_dropout)
 
-
     def collect_playback(self, reduced_x, x_play_back) -> None:
-        r"""Return the self attention tensor from transformer. No need extra processing.
+        """Collects self-attention tensors from the RNN's playback. This function retrieves and processes the
+        self-attention tensors stored in the RNN's playback. Each playback should have a size of `(B x W + 2 x W +
+        2)` where `B` is the batch size and `W` is the grid size used in CNN encoder when performing gridding. The +2
+        is because of the added classification token and confidence token.
+
+        Args:
+          reduced_x: Placeholder for reduced input data. Not used.
+          x_play_back: Placeholder for playback data. Not used.
+
+        Returns:
+          None
 
         .. note::
-            * The play back should be the self-attention of a single mini-batch
-            * Each play back should have a size of `(B x S x S)` where `S` is the number of slice
+            * The playbacks are expected from the attribute ``play_back`` of ``self.rnn``. The format should be
+              dictionary to cater for different length. But for transformer, it should be the same. The length of the
+              dictionary should be the same as the number of layer of the ebeddings. The playback is concatenated and
+            * `playback` tensor shape should be :math:`(B \times W + 2 \times W + 2)`.
         """
-        df = []
-        for sa in self.get_playback():
-            print(sa.shape)
+        for play_back_dict in self.rnn.play_back:
+            if len(play_back_dict):
+                self.play_back.append(torch.stack([r for r in dict(sorted(play_back_dict.items())).values()]))
+
 
     def inference_forward(self, B, o):
         r"""Here, as CrossEntropy is used as loss, the inference is the regular path"""

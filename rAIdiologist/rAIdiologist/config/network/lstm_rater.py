@@ -329,7 +329,7 @@ class Transformer_rater(nn.Module):
             for name, m in self.embedding.named_modules():
                 # read self attention if it is a transformer layer
                 if isinstance(m, TransformerEncoderLayerWithAttn):
-                    attn[name] = m.attn_playback.pop()
+                    attn[name] = m.attn_playback.pop().cpu()
             self.play_back.append(attn)
         else:
             embed = self.embedding(x, src_key_padding_mask=src_key_padding_mask)
@@ -338,6 +338,11 @@ class Transformer_rater(nn.Module):
         return embed
 
     def clean_playback(self):
+        for l in self.embedding.layers:
+            try:
+                l.clean_playback()
+            except:
+                pass
         self.play_back.clear()
 
     def get_playback(self):
@@ -372,6 +377,42 @@ class TransformerEncoderLayerWithAttn(nn.TransformerEncoderLayer):
         self.attn_playback = []
 
     def forward(self, src, src_mask=None, src_key_padding_mask=None, **kwargs):
+        """Processes the input tensor through the transformer module with optional masking.
+
+        This method applies a sequence of transformations to the input tensor `src`,
+        supporting optional attention and padding masks. It is designed to handle
+        various configurations, including whether to normalize first and whether to
+        return attention weights, which is a significant customization over the
+        standard transformer implementation.
+
+        Args:
+            src (Tensor):
+                The input tensor to be transformed, typically of shape `(sequence_length, batch_size,
+                embedding_dim)`.
+            src_mask (Tensor, optional):
+                A mask to apply to the source sequence, typically used to prevent attention to certain positions.
+            src_key_padding_mask (Tensor, optional):
+                A mask indicating padding positions in the source sequence. This is processed to ensure it matches
+                the expected data type and shape.
+            **kwargs:
+                Additional keyword arguments for further customization, if needed.
+
+        Returns:
+            Tensor:
+                The transformed output tensor, with the same shape as `src`.
+
+        Raises:
+            ArithmeticError:
+                If attention weights are requested and gradient computation is enabled, as attention is only
+                returned during inference.
+
+        Notes:
+            - This implementation supports conditional normalization (`norm_first`) and optional attention
+              weight retrieval, providing flexibility over the standard transformer.
+            - Attention weights are stored for playback if `need_weights` is True, allowing post-processing
+            analysis.
+            - Custom handling of masks ensures compatibility with input data types and shapes.
+        """
         # Create the mask and convert it to correct type
         src_key_padding_mask = F._canonical_mask(
             mask=src_key_padding_mask,
