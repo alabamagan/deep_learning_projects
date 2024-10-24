@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_sequence
 import copy
-from .lstm_rater import LSTM_rater, Transformer_rater
+from .lstm_rater import LSTM_rater, Transformer_rater, TransformerEncoderLayerWithAttn
 from .slicewise_ran import SlicewiseAttentionRAN, RAN_25D, SWRAN_Block
 from .old.old_swran import SlicewiseAttentionRAN_old
 from .ViT3d.models import ViTVNetImg2Pred, CONFIGS
@@ -212,6 +212,9 @@ class rAIdiologist(nn.Module):
         while x.dim() < 5:
             x = x.unsqueeze(0)
         nonzero_slices, top_slices = RAN_25D.get_nonzero_slices(x.detach().cpu())
+        # Store the shape for reconstructing playback
+        in_tensor_shape = x.shape
+
 
         reduced_x, x = self.cnn(x)     # Shape -> x: (B x 2048 x S); reduced_x: (B x 1)
         x = self.dropout(x)
@@ -231,7 +234,7 @@ class rAIdiologist(nn.Module):
             self.collect_playback(reduced_x, x_play_back)
 
         # if self.training:
-        if False:
+        if False: # Temperily make it returns everything with both pred and conf.
             return self.get_prediction_train(o)
         else:
             out = self.inference_forward(B, o)
@@ -327,13 +330,16 @@ class rAIdiologist(nn.Module):
 class rAIdiologist_Transformer(rAIdiologist):
     def __init__(self, in_ch=1, out_ch=2, record=False, cnn_dropout=0.15, rnn_dropout=0.1, bidirectional=False, mode=0,
                  reduce_strats='max', custom_cnn=None, custom_rnn=None):
+        # grid_size means how are the grid divided
+        self._grid_size = [8, 8]
+
         # for guild hyper param tunning
         cnn_dropout = float(os.getenv('cnn_drop', None) or cnn_dropout)
         rnn_dropout = float(os.getenv('rnn_drop', None) or rnn_dropout)
 
         # * Define CNN and RNN
         cnn = SWRAN_Block(in_ch, out_ch, dropout=cnn_dropout,
-                          return_top=True, sigmoid_out=False, grid_size=[8, 8])
+                          return_top=True, sigmoid_out=False, grid_size=self._grid_size)
         rnn = Transformer_rater(in_ch=2048, dropout=rnn_dropout, out_ch=out_ch)
 
         # Useless variables
@@ -343,7 +349,7 @@ class rAIdiologist_Transformer(rAIdiologist):
                          custom_cnn=cnn, custom_rnn=rnn)
         self.dropout = DropPatch(cnn_dropout)
 
-    def collect_playback(self, reduced_x, x_play_back) -> None:
+    def collect_playback_transformer(self, original_size, grid_size) -> None:
         """Collects self-attention tensors from the RNN's playback. This function retrieves and processes the
         self-attention tensors stored in the RNN's playback. Each playback should have a size of `(B x W + 2 x W +
         2)` where `B` is the batch size and `W` is the grid size used in CNN encoder when performing gridding. The +2
@@ -364,7 +370,13 @@ class rAIdiologist_Transformer(rAIdiologist):
         """
         for play_back_dict in self.rnn.play_back:
             if len(play_back_dict):
-                self.play_back.append(torch.stack([r for r in dict(sorted(play_back_dict.items())).values()]))
+                # Stack the attention from different layers
+                playback = torch.stack([r for r in dict(sorted(play_back_dict.items())).values()], dim=1)
+                # Save it one case at a time
+                for b in range(playback.shape[0]):
+                    pb = TransformerEncoderLayerWithAttn.sa_from_playback(playback[b].unsqueeze(1),
+                                                                          original_size, grid_size)
+                    self.play_back.append(playback)
 
 
     def inference_forward(self, B, o):
@@ -391,7 +403,18 @@ class rAIdiologist_Transformer(rAIdiologist):
         # It is expected the output for the cnn part is already zero padded for inputs with different number of slices.
         nonzero_slices, top_slices = RAN_25D.get_nonzero_slices(x.detach().cpu())
         reduced_x, x = self.cnn(x)     # Shape -> x: (B x 2048 x (grid_size * S)); reduced_x: (B x C)
-        _, __, h, w, _ = x.shape
+        _, __, h, w, s = x.shape
+        grid_size = {
+            'h': h,
+            'w': w,
+            's': s
+        }
+        # This is for SA reconstruction
+        grid_size_4_SA = {
+            'h': h,
+            'w': w,
+            's': s - 1
+        }
         x = self.dropout(einops.rearrange(x, 'b c h w s -> b c (s w h)'))
 
         while x.dim() < 3:
@@ -406,7 +429,7 @@ class rAIdiologist_Transformer(rAIdiologist):
         o = self.rnn(x[:, h * w:],  # discard the first and last slice because CNN kernel is [3x3x3]
                      torch.as_tensor(top_slices).int() * h * w - 1) # -1 discard the last slice
         if self.RECORD_ON and not self.training:
-            self.collect_playback(reduced_x, x_play_back)
+            self.collect_playback_transformer(x.shape, grid_size_4_SA)
 
         # use rnn prediction to decide if cnn prediction needs to be revoked
         if self._mode == 1:
@@ -418,8 +441,11 @@ class rAIdiologist_Transformer(rAIdiologist):
             conf_rnn = torch.clip(torch.sigmoid(conf_rnn), 0.2, 0.8)
             conf_cnn = -conf_rnn + 1
             # Output (B x 2 x 1)
-            return torch.stack([(conf_rnn * self.rnn.get_prediction_from_output(o) + conf_cnn * reduced_x), conf_rnn],
-                                dim=1)
+            return torch.stack([
+                    (conf_rnn * self.rnn.get_prediction_from_output(o) + conf_cnn * reduced_x),
+                    conf_rnn,
+                    self.rnn.get_prediction_from_output(o)],
+                dim=1)
 
     def forward(self, *args):
         if self._mode == 0:
