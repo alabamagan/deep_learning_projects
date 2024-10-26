@@ -88,6 +88,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         by the network. In mode 0, the output shape is (B x 1)"""
 
         # res: (B x S x C)/(B x S x 1)/B x (S x C), g: (B x 1)
+        self._logger.debug(f"{g.shape = }; {res.shape = }")
         if self.rAI_classification:
             if isinstance(self.loss_function, ConfidenceCELoss) and isinstance(res, (list, tuple)):
                 pred, conf = res
@@ -109,10 +110,10 @@ class rAIdiologistSolver(BinaryClassificationSolver):
             _data =np.concatenate([res.view(-1, chan).data.numpy(), g.data.view(-1, 1).numpy()], axis=-1)
             _df = pd.DataFrame(data=_data, columns=['res_%i'%i for i in range(chan)] + ['g'])
             _df['Verify_wo_conf'] = (_df['res_0'] >= 0) == (_df['g'] > 0)
-            _df['Verify_wo_conf'].replace({True: "Correct", False: "Wrong"}, inplace=True)
-            if chan == 2:
+            _df.replace({'Verify_wo_conf':{True: "Correct", False: "Wrong"}}, inplace=True)
+            if chan > 2 and chan < 4:
                 _df['Verify_w_conf'] = ((_df['res_0'] >= 0) == (_df['g'] > 0)) == (_df['res_1'] >= 0)
-                _df['Verify_w_conf'].replace({True: "Correct", False: "Wrong"}, inplace=True)
+                _df.replace({'Verify_w_conf': {True: "Correct", False: "Wrong"}}, inplace=True)
             if chan == 4:
                 rename_dict = {
                     'res_0': 'overall_pred',
@@ -126,8 +127,11 @@ class rAIdiologistSolver(BinaryClassificationSolver):
 
             # res: (B x C)/(B x 1)
             if chan > 1:
-                res = res.squeeze()
-                dic = torch.zeros_like(res[..., 0])
+                res = res.squeeze(-1)
+                if not res.dim() == 2:
+                    raise ArithmeticError(f"Expect output dimension 2, got: {res.shape}")
+
+                dic = torch.zeros_like(res[..., 0]).view([-1, 1])
                 dic = dic.type_as(res).int() # move to cuda if required
                 dic[torch.where(res[..., 0] >= 0)] = 1
             else:
@@ -158,7 +162,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
                 res = [r.view(-1, 1) for r in res]
             elif res.dim() == 3:
                 # Assume output is stack of prediction and confidence
-                res = res.view(-1, 2, 1)
+                res = res.view(-1, 3, 1)
             else:
                 res = res.view(-1,1)
             return g.view(-1, 1), res
@@ -236,7 +240,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
             store_dict['predictions'].extend(res.flatten().tolist())
         if isinstance(uids, (tuple, list)):
             store_dict['uids'].extend(uids)
-            
+
     def _validation_callback(self) -> None:
         if self.rAI_classification:
             return super(BinaryClassificationSolver, self)._validation_callback()

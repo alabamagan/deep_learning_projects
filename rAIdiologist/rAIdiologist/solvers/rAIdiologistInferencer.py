@@ -1,10 +1,15 @@
 import torch
 import json
 import einops
+from tqdm.auto import tqdm
+import torchio as tio
+import SimpleITK as sitk
+
 from pathlib import Path
 from pytorch_med_imaging.inferencers.BinaryClassificationInferencer import BinaryClassificationInferencer
-from typing import Union, Iterable, Optional, Tuple
+from typing import Union, Iterable, Optional, Tuple, List
 from ..config.network.rAIdiologist import *
+from ..config.network.lstm_rater import *
 
 __all__ = ['rAIdiologistInferencer']
 
@@ -75,10 +80,68 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
                 gt_tensor = gt_tensor.unsqueeze(0)
         return out_tensor, gt_tensor
 
+    def _write_out(self):
+        r"""This inherit passes the input image's directory to _writter
+        """
+        uids = []
+        gt_tensor = []
+        out_tensor = []
+        last_batch_dim = 0
+        with torch.no_grad():
+            self.net = self.net.eval()
+            # dataloader = DataLoader(self._inference_subjects, batch_size=self.batch_size, shuffle=False)
+            dataloader = self.data_loader
+            input_directories = []
+            input_tensors = []
+            for index, mb in enumerate(tqdm(dataloader.get_torch_data_loader(self.batch_size, exclude_augment=True),
+                                            desc="Steps")):
+                s = self._unpack_minibatch(mb, self.unpack_key_inference)
+                s = self._match_type_with_network(s)
+                input_directories.extend(mb['input']['path'])
+
+                try:
+                    self._logger.debug(f"Processing: {mb['uid']}")
+                    _msg = f"s size: {s.shape if not isinstance(s, (list, tuple)) else [ss.shape for ss in s]}"
+                    self._logger.debug(_msg)
+                except:
+                    pass
+
+                # Squeezing output directly cause problem if the output has only one output channel.
+                try:
+                    if isinstance(s, (list, tuple)):
+                        input_tensors.extend([ss.cpu() for ss in s[0]])  # ! Note that this might cause RAM problem
+                        out = self.net(*s)
+                    else:
+                        input_tensors.extend([ss.cpu() for ss in s])  # ! Note that this might cause RAM problem
+                        out = self.net(s)
+                    out = self._prepare_network_output(out)
+                except Exception as e:
+                    if 'uid' in mb:
+                        self._logger.error(f"Error when dealing with minibatch: {mb['uid']}")
+                    raise e
+
+                while ((out.dim() < last_batch_dim) or (out.dim() < 2)) and last_batch_dim != 0:
+                    out = out.unsqueeze(0)
+                    self._logger.log_print_tqdm('Unsqueezing last batch.' + str(out.shape))
+                self._logger.debug(f"out size: {out.shape}")
+                out_tensor.append(out.data.cpu())
+                uids.extend(mb['uid'])
+                if 'gt' in mb:
+                    gt_tensor.append(mb['gt'])
+
+                last_batch_dim = out.dim()
+                del out
+
+            out_tensor, gt_tensor = self._reshape_tensors(out_tensor, gt_tensor)
+            dl = self._writter(out_tensor, uids, gt_tensor, input_tensors)
+            self._logger.debug('\n' + dl._data_table.to_string())
+
+
     def _writter(self,
                  out_tensor: torch.IntTensor,
                  uids: Iterable[Union[str, int]],
-                 gt: Optional[torch.IntTensor] = None):
+                 gt: Optional[torch.IntTensor] = None,
+                 input_tensors: Optional[List[torch.Tensor]] = None):
         r"""
         Playbacks should be a list with tensor elements of dimensions (S x 3), e.g., [(S x 3), (S x 3), ...]. The length
         of the playbacks should match that of the uids.
@@ -102,9 +165,13 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
             if out_tensor.dim() == 3:
                 out_tensor = einops.rearrange(out_tensor, 'b i c -> b c i').squeeze()
 
+            # try to fix gt shape
+            if gt is not None:
+                gt = gt.view([-1, 1])
+
             dl = super(rAIdiologistInferencer, self)._writter(out_tensor[..., 0].view(-1, 1),
                                                               uids,
-                                                              gt.view(-1, 1),
+                                                              gt,
                                                               sig_out=True)
             try:
                 dl._data_table['Conf_0'] = out_tensor[..., 2]
@@ -122,14 +189,40 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
             dl.write(self.output_dir)
 
             if self.rAI_inf_save_playbacks:
-                out_path = Path(self.output_dir).with_suffix('.json')
-                self._logger.debug(f"playbacks: {self.playbacks}")
+                out_path = Path(self.output_dir).parent / 'SelfAttention'
+                out_path.mkdir(exist_ok=True, parents=True)
+                if not out_path.is_dir():
+                    raise FileExistsError(f"{out_path} is a file and not a directory")
+                # self._logger.debug(f"playbacks: {self.playbacks}")
                 self._logger.info(f"Writing playbacks to: {str(out_path)}")
+                _debug = {
+                    'type': [type(s) for s in self.playbacks],
+                    'len': [len(s) for s in self.playbacks],
+                    'shape': [s.shape for s in self.playbacks],
+                    'input_tensor_shape': [s.shape for s in input_tensors],
+                    'uids': uids,
+                }
+                self._logger.debug(f"{_debug}")
                 if len(uids) != len(self.playbacks):
                     self._logger.warning("Playback does not match uids")
-                out_dict = {u: l.tolist() for u, l in zip(uids, self.playbacks)}
-                with out_path.open('w') as jf:
-                    json.dump(out_dict, jf, sort_keys=True)
+                else:
+                    self._logger.info(f"Writing playback, this could take a while...")
+                    for _uid, p, s in zip(uids, self.playbacks, input_tensors):
+                        if isinstance(s, torch.Tensor):
+                            # convert self-attention
+                            grid_size = {
+                                'h': self.net._grid_size[0],
+                                'w': self.net._grid_size[0],
+                                's': s.shape[-1] - 1
+                            }
+                            pb_pred, pb_conf = TransformerEncoderLayerWithAttn.sa_from_playback(p, s, grid_size)
+                            # now it's very difficult to map the SA to original space, so I'll just save it like this
+                            oname_pb_pred   = out_path / (_uid + '_pb_pred.nii.gz')
+                            oname_in_tensor = out_path / (_uid + '_image.nii.gz')
+                            pb_pred.save(oname_pb_pred)
+                            tio.ScalarImage(tensor=s).save(oname_in_tensor)
+                            self._logger.info(f"Written {_uid} to {out_path}")
+
             return dl
 
     def _forward_hook_gen(self):

@@ -13,7 +13,13 @@ from ..solvers.rAIdiologistInferencer import *
 from dataclasses import asdict
 import copy
 from datetime import datetime
+from typing import *
 import torch
+import os
+
+# Set project meta for neptune plot
+os.environ['NEPTUNE_PROJECT'] = "CUHK-DIIR/NPC-Screening"
+
 
 # For training
 data_loader = PMIImageFeaturePairLoaderCFG(
@@ -57,7 +63,6 @@ data_loader_test = PMIImageFeaturePairLoaderCFG(
     )
 )
 
-
 class MySolverCFG(rAIdiologistSolverCFG):
     r"""This is created to cater for the configuration of rAIdiologist network"""
     net           = rAIdiologist(out_ch = 1, cnn_dropout= 0.2, rnn_dropout= 0.2)
@@ -71,23 +76,16 @@ class MySolverCFG(rAIdiologistSolverCFG):
     unpack_key_forward   = ['input'  , 'gt']
     unpack_key_inference = ['input']
 
-    plot_to_tb        = True
     early_stop        = 'loss_reference'
     early_stop_kwargs = {'warmup'       : 5, 'patience': 10}
     accumulate_grad   = 0
 
-    # lr_sche = 'ExponentialLR'
-    # lr_sche_args = [0.99]
-    # lr_sche = 'OneCycleLR'
-    # lr_sche_args = "[]"
-    # lr_sche_kwargs = "{'max_lr':1E-3,'total_steps':50,'cycle_momentum':True}"
-    # lr_sche = 'CosineAnnealingWarmRestarts'
-    # lr_sche_kwargs = "{'T_0': 10, 'T_mult': 2, 'eta_min': 0"
     rAI_inf_save_playbacks = True
 
     loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([1.2]),
-                                      conf_weight=0.5,
-                                      over_conf_weight=0.05)
+                                      conf_weight=float(os.environ.get("RAI_CONF_WEIGHT", 0.2)),
+                                      over_conf_weight=float(os.environ.get("RAI_OVER_CONF_WEIGHT", 0.5)),
+                                      gamma=float(os.environ.get("RAI_GAMMA", 0.8)))
 
 # id_list_dir = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold"
 id_list_dir = "./NPC_Segmentation/99.Testing/NPC_Screening/rai_v5.1/"
@@ -112,8 +110,16 @@ class MyControllerCFG(PMIControllerCFG):
     solver_cls     = rAIdiologistSolver
     inferencer_cls = rAIdiologistInferencer
 
+    debug_mode = True
     debug_validation = False
     compile_net = False
+
+    # For plotting
+    plotting        = False
+    plotter_type = 'neptune'
+    plotter_init_meta = {
+        'description': "rAIdiologists training project."
+    }
 
 
 class PretrainControllerCFG(MyControllerCFG):
