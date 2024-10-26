@@ -368,15 +368,17 @@ class rAIdiologist_Transformer(rAIdiologist):
               dictionary should be the same as the number of layer of the ebeddings. The playback is concatenated and
             * `playback` tensor shape should be :math:`(B \times W + 2 \times W + 2)`.
         """
-        for play_back_dict in self.rnn.play_back:
-            if len(play_back_dict):
-                # Stack the attention from different layers
-                playback = torch.stack([r for r in dict(sorted(play_back_dict.items())).values()], dim=1)
-                # Save it one case at a time
-                for b in range(playback.shape[0]):
-                    pb = TransformerEncoderLayerWithAttn.sa_from_playback(playback[b].unsqueeze(1),
-                                                                          original_size, grid_size)
-                    self.play_back.append(playback)
+        try:
+            for play_back_dict in self.rnn.play_back:
+                if len(play_back_dict):
+                    # Stack the attention from different layers
+                    playback = torch.stack([r for r in dict(sorted(play_back_dict.items())).values()], dim=1)
+                    # Save it one case at a time
+                    for b in range(playback.shape[0]):
+                        self.play_back.append(playback[b].unsqueeze(0))
+        except Exception as e:
+            # Prevent playback collection error from interrputing the inference, but return error
+            MNTSLogger.global_logger.exception(e)
 
 
     def inference_forward(self, B, o):
@@ -399,6 +401,9 @@ class rAIdiologist_Transformer(rAIdiologist):
         B = x.shape[0]
         while x.dim() < 5:
             x = x.unsqueeze(0)
+        # record input size for self attention map
+        sa_reconshape = list(x.shape)
+        sa_reconshape[-1] -= 1 # First slice is ignored by transformer because of CNN's receptive field
 
         # It is expected the output for the cnn part is already zero padded for inputs with different number of slices.
         nonzero_slices, top_slices = RAN_25D.get_nonzero_slices(x.detach().cpu())
@@ -429,7 +434,7 @@ class rAIdiologist_Transformer(rAIdiologist):
         o = self.rnn(x[:, h * w:],  # discard the first and last slice because CNN kernel is [3x3x3]
                      torch.as_tensor(top_slices).int() * h * w - 1) # -1 discard the last slice
         if self.RECORD_ON and not self.training:
-            self.collect_playback_transformer(x.shape, grid_size_4_SA)
+            self.collect_playback_transformer(sa_reconshape, grid_size_4_SA)
 
         # use rnn prediction to decide if cnn prediction needs to be revoked
         if self._mode == 1:

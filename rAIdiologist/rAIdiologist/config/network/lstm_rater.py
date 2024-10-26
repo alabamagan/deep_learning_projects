@@ -6,9 +6,8 @@ import torch.nn.functional as F
 
 from einops import rearrange, repeat
 from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_sequence
-
 from pytorch_med_imaging.networks.layers import PositionalEncoding, NormLayers
-
+import torchio as tio
 
 
 class LSTM_rater(nn.Module):
@@ -467,3 +466,60 @@ class TransformerEncoderLayerWithAttn(nn.TransformerEncoderLayer):
 
     def clean_playback(self):
         self.attn_playback.clear()
+
+    @staticmethod
+    def sa_from_playback(playback: torch.Tensor, in_tensor: Union[torch.Size,torch.Tensor],
+                         grid_size: dict) -> tio.ScalarImage:
+        """Reshape and interpolate playback data for prediction and confidence.
+
+        This function rearranges and resizes playback data to match the input tensor size,
+        preparing it for further processing as TorchIO images.
+
+        Args:
+            playback (torch.Tensor):
+                The playback data containing prediction and confidence information. Should be
+                obtained from :class:`rAIdiologist_Transformer` instance.
+            in_tensor (torch.Tensor):
+                The input tensor to match the size for interpolation.
+            grid_size (dict):
+                The grid size used for rearranging the playback data. This should contain the
+                number or columns, rows and slice, put in key 'w', 'h', and 'z', of the axial
+                view. You should reference the 'grid_size' option when you create the network.
+
+        Returns:
+            tio.ScalarImage: A TorchIO ScalarImage containing the resized prediction data.
+        """
+        # Reshape the playback data for prediction and confidence
+        # 0-th token is the prediction, 2-nd + tokens are image information tokens
+        sa_for_prediction = rearrange(
+            playback[:, :, 0, 2:].cuda(), 'b c (s w h) -> b c h w s', **grid_size
+        )
+        # 1-st token is the confidence token
+        sa_for_confidence = rearrange(
+            playback[:, :, 1, 2:].cuda(), 'b c (s w h) -> b c h w s', **grid_size
+        )
+
+        if isinstance(in_tensor, torch.Tensor):
+            in_tensor = in_tensor.shape
+        elif not isinstance(in_tensor, (tuple, torch.Size, list)):
+            raise RuntimeError(f"In correct type {type(in_tensor) = }. Expect torch.Tensor or shape")
+
+        # Interpolate reshaped playback data to match input tensor size
+        sa_for_prediction_resized = F.interpolate(
+            sa_for_prediction, size=(in_tensor[-3], in_tensor[-2], 24),
+            mode='trilinear', align_corners=False
+        ).float()
+
+        sa_for_confidence_resized = F.interpolate(
+            sa_for_confidence, size=(in_tensor[-3], in_tensor[-2], 24),
+            mode='trilinear', align_corners=False
+        ).float()
+
+        # Create TorchIO images for input, prediction, and confidence. Normalize them to range 0-1000
+        resized_sa_pred = tio.ScalarImage(
+            tensor=(sa_for_prediction_resized / sa_for_prediction_resized.max() * 1000).type(torch.int16).squeeze().cpu()
+        )
+        resized_sa_conf = tio.ScalarImage(
+            tensor=(sa_for_confidence_resized / sa_for_confidence_resized.max() * 1000).type(torch.int16).squeeze().cpu()
+        )
+        return resized_sa_pred, resized_sa_conf

@@ -24,5 +24,25 @@ class TestLossFunction(unittest.TestCase):
 
         self.assertEqual(1, out.dim())
 
+    def test_confidence_bce_loss(self):
+        dummy_input = torch.rand([10, 128])
+        dummy_module = torch.nn.Linear(128, 2)
+        dummy_target = torch.randint(0, 1, [10])
+        loss_func = ConfidenceBCELoss(conf_weight=0.5, over_conf_weight=0.1, gamma=0.01, pos_weight=torch.Tensor([1.1]))
+
+        if torch.cuda.is_available():
+            dummy_input = dummy_input.cuda()
+            dummy_module = dummy_module.cuda()
+            dummy_target = dummy_target.cuda()
+            loss_func = loss_func.cuda()
+
+        o = dummy_module.forward(dummy_input)
+        pred = o[:, :2]
+
+        out = loss_func(pred, dummy_target.float())
+        out.backward()
+
+        self.assertEqual(0, out.dim())
+
 if __name__ == '__main__':
     unittest.main()

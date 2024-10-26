@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.modules.module import T
 from torch.nn.utils.rnn import *
 from torch.utils.hooks import RemovableHandle
 
 from pytorch_med_imaging.loss import BinaryFocalLoss
+from pytorch_med_imaging.integration import neptune_plotter
 import os
 import pprint
 from typing import Any, Callable, Dict, Optional, Tuple, Union
@@ -40,7 +42,7 @@ class ConfidenceBCELoss(nn.Module):
         weight can be controlled using the parameter 'delay'
 
     """
-    def __init__(self, *args, conf_weight=0.3, over_conf_weight=0.5, delay=5, **kwargs):
+    def __init__(self, *args, conf_weight=0.3, over_conf_weight=0.5, gamma=0.1, **kwargs):
         r"""Assumes input from model have already passed through sigmoid"""
         super(ConfidenceBCELoss, self).__init__()
         self.base_loss = nn.BCEWithLogitsLoss(*args, **kwargs, reduction='none')
@@ -52,36 +54,56 @@ class ConfidenceBCELoss(nn.Module):
         # self.register_buffer('_delay', torch.DoubleTensor([delay]))
         self.register_buffer('alpha', torch.DoubleTensor([conf_weight]))
         self.register_buffer('beta', torch.DoubleTensor([over_conf_weight]))
+        self.register_buffer('gamma', torch.DoubleTensor([gamma]))
         # self.register_buffer('_sigma', torch.DoubleTensor([2.]))
 
-    def forward(self,
-                input: PackedSequence,
-                target: torch.DoubleTensor):
-        # Typical classification loss for first dimension
-        batch_size = len(input)
-        if input.dim() == 3:
-            predictions = input[:, 0]
-            sig_pred = torch.sigmoid(predictions)
-            confidence = input[:, 1]
-            sig_conf = torch.sigmoid(confidence)
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Computes the custom classification loss.
 
-            # Confidence regularization: Encourage high confidence for correct predictions
-            confidence_loss = torch.mean((1.0 - sig_conf) * torch.abs(sig_pred - target))
+        Args:
+            input (torch.Tensor): Tensor of shape (batch_size, 2) where input[:, 0] are predictions and input[:, 1] are confidence scores.
+            target (torch.Tensor): Ground truth tensor of shape (batch_size,).
 
-
-            loss = self.base_loss.forward(predictions, target) + self.alpha * confidence_loss
-
-            # Penalize overconfidence on wrong predictions
-            incorrect_pred_mask = (sig_pred > 0.5) ^ (target > 0.5)
-            if torch.sum(incorrect_pred_mask) > 0:
-                overconfidence_penalty = torch.sum(confidence[incorrect_pred_mask])
-                loss = loss.mean() + self.beta * overconfidence_penalty
-            else:
-                loss = loss.mean()
-
+        Returns:
+            torch.Tensor: Computed loss value.
+        """
+        batch_size = input.size(0)
+        # If input has only one output, use the base loss
+        if input.shape[1] == 1:
+            return self.base_loss(input, target).mean()
         else:
-            loss = self.base_loss.forward(input.flatten(), target.flatten()).mean()
-        return loss
+            predictions, confidence, rnn_predictions = input[:, 0], input[:, 1], input[:,2]
+
+            sig_rnn_pred = torch.sigmoid(rnn_predictions)
+            sig_conf = confidence # This is expected to have already been sigmoided
+
+            # Clamp to prevent numerical issues
+            epsilon = 1e-7
+            sig_rnn_pred = torch.clamp(sig_rnn_pred, epsilon, 1 - epsilon)
+            sig_conf = torch.clamp(sig_conf, epsilon, 1 - epsilon)
+
+            # Base loss (i.g., Binary Cross-Entropy with Logits)
+            base_loss = self.base_loss(predictions, target)
+
+            # Soft correctness: higher when prediction aligns with target
+            # For binary classification: target in {0,1}
+            correctness = sig_rnn_pred * target + (1 - sig_rnn_pred) * (1 - target)  # Probability of being correct
+
+            # Confidence regularization: encourage sig_conf to match correctness
+            confidence_loss = F.binary_cross_entropy(sig_conf, correctness)
+
+            # Overconfidence penalty: discourage high confidence when correctness is low
+            overconfidence_penalty = torch.mean(sig_conf * (1 - correctness))  # High when confident but incorrect
+
+            # Encourage some level of confidence (e.g., prevent all confidences from being too low)
+            regularization = F.binary_cross_entropy(sig_conf, torch.full_like(sig_conf, 0.5))
+
+            # Combine all loss components
+            loss = base_loss + self.alpha * confidence_loss + \
+                   self.beta * overconfidence_penalty + self.gamma * regularization
+            return loss.mean()
+
 
     @property
     def weight(self):
