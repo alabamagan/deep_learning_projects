@@ -1,3 +1,5 @@
+import sys
+
 from pytorch_med_imaging.controller import PMIController
 from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolverCFG
 from pytorch_med_imaging.inferencers import BinaryClassificationInferencer, ClassificationInferencer
@@ -23,11 +25,10 @@ global rai_options
 # Setup metadata for neptune
 import neptune
 
-
 @click.command()
-@click.option('--inference', default=False, is_flag=True, help="For guild operation")
-@click.option('--ddp', default=False, is_flag=True, help="For guild operation")
-@click.option('--pretrain', default=False, is_flag=True, help="For guild operation")
+@click.option('--inference', default = False, is_flag = True , help = "For guild operation")
+@click.option('--ddp'      , default = False, is_flag = True , help = "For guild operation")
+@click.option('--pretrain' , default = False, is_flag = True , help = "For guild operation")
 @click.option('--inference-dir', type=click.Path(exists=True, dir_okay=True), required=False,
               help="Override inference directory.")
 @click.option('--id-globber', type=str, default=None,
@@ -38,14 +39,20 @@ def main(inference, ddp, pretrain, inference_dir, id_globber):
     else:
         cfg = PretrainControllerCFG()
 
-    # Guild is giving us trouble for double printing everything
+    # Guild is giving us trouble for double printing everything, but we can't suppress it's message because it
+    # won't capture the scalar values if we do that. So we have to suppress our own logger instead...
     cfg.verbose = False
+
+    # But first, Set the log format
     logger_dict = logging.Logger.manager.loggerDict
     formatter = logging.Formatter(MNTSLogger.log_format)
     for logger_name, logger_instance in logger_dict.items():
         if isinstance(logger_instance, logging.Logger):
             for handlers in logger_instance.handlers:
                 handlers.setFormatter(formatter)
+    # This sets the format for guild's output
+    for handlers in logging.getLogger().handlers:
+        handlers.setFormatter(formatter)
 
     if inference:
         if ddp:
@@ -77,10 +84,14 @@ def main(inference, ddp, pretrain, inference_dir, id_globber):
         with open('flags.yaml', 'w') as f:
             yaml.dump(loaded_flags, f)
 
+
     # If DDP mode is not on, simply execute one process
     if not ddp:
         controller = rAIController(cfg)
         controller.override_cfg('flags.yaml')
+        # Turn off verbosity so that we don't double print
+        MNTSLogger.set_global_verbosity(False)
+
 
         # override network by guild flags
         controller.solver_cfg.net = rai_options['networks'][controller.net_name]
@@ -104,6 +115,7 @@ def main(inference, ddp, pretrain, inference_dir, id_globber):
         controller.cfg.run_mode = 'inference'
         controller = rAIController(controller.cfg)
         controller.exec()
+
 
 
 
