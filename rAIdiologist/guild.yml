@@ -30,6 +30,15 @@
         rnn_drop:
           env-name: rnn_drop
           default: 0.2
+        rai_conf_weight:
+          env-name: RAI_CONF_WEIGHT
+          default: 0.2
+        rai_over_conf_weight:
+          env-name: RAI_OVER_CONF_WEIGHT
+          default: 0.5
+        rai_gamma:
+          env-name: RAI_GAMMA
+          default: 0.8
       flags-dest: config:rAIdiologist/config/flags/flags.yaml
       flags-import: all
       output-scalars:
@@ -40,18 +49,8 @@
         training/step_lr: 'LR: (\value)'
       requires:
         - default
-        - operation: pretrain
-          optional: true
-          select:
-          - '.*_pretrain.pt'
-          target-type: 'copy'
-          target-path: 'Backup'
-        - operation: train
-          optional: true
-          select:
-            - 'Backup/rAIdiologist_[a-zA-Z0-9]*.pt'
-          target-type: 'copy'
-          target-path: 'Backup'
+        - copy-checkpoint-pretrain
+        - copy-checkpoint
 
     train-ddp:
       main: main --ddp
@@ -162,6 +161,7 @@
 
     copy-checkpoint:
       - operation: train
+        optional: true
         select:
         - 'Backup/rAIdiologist_[a-zA-Z0-9]*.pt'
         target-type: 'copy'
@@ -169,6 +169,7 @@
 
     copy-checkpoint-pretrain:
       - operation: pretrain
+        optional: true
         select:
           - 'Backup/.*_pretrain.pt'
         target-type: 'copy'
