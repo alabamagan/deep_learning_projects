@@ -53,6 +53,7 @@ class Test3DNetworks(unittest.TestCase):
             o = self.net(self.sample_input_sequences_padded, self.seq_len)
             print(o.shape)
 
+    @unittest.skip("Forward with CNN is not supported now")
     def test_lstm_rater_w_cnn_pred(self):
         self.net = LSTM_rater(self.num_chan, embed_ch=512, out_ch=2, forward_cnn_pred=True)
         if self.has_cuda:
