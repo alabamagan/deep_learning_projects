@@ -44,6 +44,7 @@ class Test_visualization_rAIdiologist(unittest.TestCase):
         self.image = tio.ScalarImage(str(self.img_dir.joinpath('IMG0.nii.gz')))[tio.DATA].squeeze()
         self.cnnprediction, self.prediction, self.conf, self.indices, self.direction = unpack_json(self.json, 'IMG0')
         self.temp_out_dir  = tempfile.TemporaryDirectory()
+        self.temp_out_path = Path(self.temp_out_dir.name)
 
     def test_mark_slice(self):
         x1 = make_marked_slice(
@@ -82,7 +83,7 @@ class Test_visualization_rAIdiologist(unittest.TestCase):
                               self.conf,
                               self.indices,
                               self.direction)
-        marked_stack_2_grid(s, '/home/lwong/test.png')
+        marked_stack_2_grid(s, self.temp_out_path / 'test.png')
 
     def test_mark_stack_wo_cnnprediction(self):
         s = mark_image_stacks(self.image,
@@ -91,7 +92,7 @@ class Test_visualization_rAIdiologist(unittest.TestCase):
                               self.conf,
                               self.indices,
                               self.direction)
-        marked_stack_2_grid(s, '/home/lwong/test.png')
+        marked_stack_2_grid(s, self.temp_out_path / 'test.png')
 
     def test_label_images_in_dir(self):
         temp_dir = tempfile.TemporaryDirectory()
