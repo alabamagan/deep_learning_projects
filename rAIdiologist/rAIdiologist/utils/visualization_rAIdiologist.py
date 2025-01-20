@@ -7,8 +7,9 @@ from torchvision.utils import make_grid
 import multiprocessing as mpi
 import itertools
 import imageio
+import nibabel as nib
 from scipy import interpolate
-from pytorch_med_imaging.med_img_dataset import ImageDataSet
+from pytorch_med_imaging.pmi_data import ImageDataSet
 from functools import partial
 from pathlib import Path
 from typing import Union, Optional, Iterable
@@ -219,6 +220,7 @@ def mark_image_stacks(image_3d     : Union[torch.Tensor, np.ndarray],
     Returns:
         np.ndarray: Image stack with dimension (S x W x H x 4)
     """
+    logger = MNTSLogger['mark_image_stacks']
     if isinstance(image_3d, torch.Tensor):
         image_3d = image_3d.numpy()
     assert image_3d.ndim == 3, f"Input image_3d must be 3D, got: {image_3d.ndim}D with shape {image_3d.shape}"
@@ -234,6 +236,7 @@ def mark_image_stacks(image_3d     : Union[torch.Tensor, np.ndarray],
     if zoom_grid is not None:
         # crop the image to defined size
         if isinstance(zoom_grid, int):
+            logger.debug(f"Drawing zoom grid: {zoom_grid = }")
             zoom_grid = np.array([zoom_grid, zoom_grid])
         else:
             if len(zoom_grid) > 2:
@@ -256,9 +259,6 @@ def mark_image_stacks(image_3d     : Union[torch.Tensor, np.ndarray],
             interpolator = interpolate.interp2d(x, y, image_3d[:, :, z], kind='linear')
             interpolated_image[:, :, z] = interpolator(new_x, new_y)
         image_3d = interpolated_image
-        print(image_3d.shape)
-
-
 
     out_stack = np.stack([make_marked_slice(*row) for row
                           in zip(image_3d.transpose(2, 1, 0),
@@ -452,12 +452,14 @@ def label_images_in_dir(img_src: Union[Path, str],
 def _wrap_mpi_mark_image_stacks(im_dir, cnn_pred, lstm_pred, conf, indi, direction, outdir, kwargs):
     r"""Need this wrapper to keep memory usage reasonable"""
     global semaphore
+    logger = MNTSLogger['wrapper-{}'.format(mpi.current_process().name)]
     semaphore.acquire()
-    im = tio.ScalarImage(im_dir)
-    stack = mark_image_stacks(im[tio.DATA].squeeze().permute(1, 2, 0), cnn_pred, lstm_pred, conf, indi, direction, **kwargs)
+    logger.debug("Semaphore acquired.")
+    im = nib.load(im_dir).get_fdata()
+    stack = mark_image_stacks(im.transpose([1, 2, 0]), cnn_pred, lstm_pred, conf, indi, direction, **kwargs)
     marked_stack_2_gif(stack, outdir)
-    im.clear()
     semaphore.release()
+    logger.debug("Semaphore released.")
     del im, stack
 
 def add_arrow(line, position=None, direction='right', size=15, color=None):
