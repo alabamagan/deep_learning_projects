@@ -23,7 +23,8 @@ rai_options = {
         'mean_swran': SlicewiseAttentionRAN_old(1, 1, reduce_by_mean=True),
         'maxvit': MaxViT(1, 1, 64, (2, 2, 5, 2), window_size=5),
         'old_swran': SlicewiseAttentionRAN_old(1, 1),
-        'new_swran': SlicewiseAttentionRAN(1, 1, dropout = 0, reduce_strats='max')
+        'new_swran': SlicewiseAttentionRAN(1, 1, dropout = 0, reduce_strats='max'),
+        'scdnet': SCDenseNet()
     }
 }
 

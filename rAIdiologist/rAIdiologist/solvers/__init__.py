@@ -1,2 +1,2 @@
 from .rAIdiologistSolver import *
-from .rAIdiologistInferencer import *
+from .scdnetSolver import *
