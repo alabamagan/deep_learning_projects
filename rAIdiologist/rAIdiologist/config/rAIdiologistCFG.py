@@ -8,8 +8,7 @@ from pytorch_med_imaging.solvers.earlystop import LossReferenceEarlyStop
 from .network.rAIdiologist import rAIdiologist
 from .network.slicewise_ran import SlicewiseAttentionRAN
 from .loss.rAIdiologist_loss import ConfidenceBCELoss
-from ..solvers.rAIdiologistSolver import rAIdiologistSolverCFG, rAIdiologistSolver
-from ..solvers.rAIdiologistInferencer import *
+from ..solvers.rAIdiologistSolver import *
 from dataclasses import asdict
 import copy
 from datetime import datetime
