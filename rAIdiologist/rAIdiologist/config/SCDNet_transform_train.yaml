@@ -1,0 +1,19 @@
+# For training, patches of [325, 325, 25] is further sampled from the output normalized by this yaml file
+
+ToCanonical:
+  {}
+Resample:
+  - 'input'
+RandomMotion:
+  translation: 5 # mm ~ 10 px
+RandomAffine:
+  scales: [0.9, 1.1]
+  degrees: [10, 10, 15]
+RandomFlip:
+  - 'lr'
+RandomNoise:
+  std: [1, 15]
+CropOrPad:
+  - [400, 400, 24]
+  - padding_mode: 0
+

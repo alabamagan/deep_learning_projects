@@ -6,6 +6,7 @@ from datetime import datetime
 from mnts.mnts_logger import MNTSLogger
 from mnts.scripts.dicom2nii import dicom2nii
 from mnts.filters.mpi_wrapper import mpi_wrapper, repeat_zip
+from mnts.utils import get_unique_IDs
 from pathlib import Path
 from typing import Optional
 import pprint
@@ -28,14 +29,16 @@ import pprint
               help='Flag to keep logs. Default log directory is ./[Date]-Normalization.log')
 @click.option('--log-level', default='INFO', help='Logging level.')
 @click.option('--verbose', '-v', is_flag=True, help="Output to STDOUT.")
-def normalize_input(input_dir: Path,
-                    output_dir: Path,
-                    mnts_state: Optional[Path],
-                    mnts_graph: Path,
+@click.option('--id-globber', default=None, type=str, help='Regex pattern to get IDs for verification.')
+def normalize_input(input_dir  : Path,
+                    output_dir : Path,
+                    mnts_state : Optional[Path],
+                    mnts_graph : Path,
                     num_workers: Optional[int],
-                    keep_log: bool,
-                    log_level: str,
-                    verbose: bool):
+                    keep_log   : bool,
+                    log_level  : str,
+                    verbose    : bool,
+                    id_globber : str):
     r"""Normalizes MRI images using the MNTS package.
 
     This command-line interface (CLI) tool processes MRI images located in
@@ -136,6 +139,22 @@ def normalize_input(input_dir: Path,
 
         # close progressbar
         G.close_progress_bar()
+
+        # Verification
+        #-------------
+        if not id_globber is None:
+            # check all files in the output directories
+            output_nii = list(output_dir.rglob("*nii.gz"))
+            output_nii = [o.name for o in output_nii]
+            output_uids = set(get_unique_IDs(output_nii                    , id_globber))
+            input_uids  = set(get_unique_IDs([f.name for f in input_fpaths], id_globber))
+
+            if not output_uids == input_uids:
+                # missing
+                missing = input_uids - output_uids
+
+                logger.warning(f"Some IDs cannot be properly processed: {', '.join(missing)}")
+
 
 if __name__ == '__main__':
     normalize_input()

@@ -1,6 +1,6 @@
 import pandas as pd
 from pytorch_med_imaging.utils.batchgenerator import GenerateTestBatch
-from pytorch_med_imaging.med_img_dataset import ImageDataSet
+from pytorch_med_imaging.pmi_data import ImageDataSet
 from pathlib import Path
 from rAIdiologist.config.rAIdiologistCFG import data_loader
 import os

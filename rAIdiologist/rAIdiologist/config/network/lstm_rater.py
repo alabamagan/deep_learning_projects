@@ -161,6 +161,9 @@ class LSTM_rater(nn.Module):
         # required input size: (B x S x C)
         num_slice = x.shape[1]
 
+        if isinstance(seq_length, (list, tuple)):
+            seq_length = torch.Tensor(seq_length)
+
         # norm expects (B x S x C)
         x = self.lstm_norm(x, seq_length=seq_length)
 

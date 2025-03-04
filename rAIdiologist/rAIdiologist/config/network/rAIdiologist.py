@@ -521,9 +521,6 @@ def create_rAIdiologist_v43():
 def create_rAIdiologist_v5():
     return rAIdiologist_Transformer(1, 1)
 
-def create_rAIdiologist_v5():
-    return rAIdiologist_Transformer(1, 1)
-
 def create_rAIdiologist_v5_1():
     r"""This version does output channel = 2"""
     return rAIdiologist_Transformer(1, 1)
@@ -535,6 +532,3 @@ def create_old_rAI():
 def create_old_rAI_rmean():
     cnn = SlicewiseAttentionRAN_old(1, 1, exclude_fc=False, return_top=False, reduce_by_mean=True)
     return rAIdiologist(1, 1, cnn_dropout=0.15, rnn_dropout=0.15, custom_cnn=cnn)
-
-
-
