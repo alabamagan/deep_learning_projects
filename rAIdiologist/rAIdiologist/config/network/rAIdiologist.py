@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence, pad_sequence
 import copy
 from .lstm_rater import LSTM_rater, Transformer_rater, TransformerEncoderLayerWithAttn
-from .slicewise_ran import SlicewiseAttentionRAN, RAN_25D, SWRAN_Block
+from .slicewise_ran import SlicewiseAttentionRAN, RAN_25D, SWRAN_Block, SWRAN_Block_Focused
 from .old.old_swran import SlicewiseAttentionRAN_old
 from .ViT3d.models import ViTVNetImg2Pred, CONFIGS
 from mnts.mnts_logger import MNTSLogger
@@ -329,18 +329,18 @@ class rAIdiologist(nn.Module):
 
 class rAIdiologist_Transformer(rAIdiologist):
     def __init__(self, in_ch=1, out_ch=2, record=False, cnn_dropout=0.15, rnn_dropout=0.1, bidirectional=False, mode=0,
-                 reduce_strats='max', custom_cnn=None, custom_rnn=None):
+                 reduce_strats='max', custom_cnn=None, custom_rnn=None, grid_size = [8, 8]):
         # grid_size means how are the grid divided
-        self._grid_size = [8, 8]
+        self._grid_size = grid_size
 
         # for guild hyper param tunning
         cnn_dropout = float(os.getenv('cnn_drop', None) or cnn_dropout)
         rnn_dropout = float(os.getenv('rnn_drop', None) or rnn_dropout)
 
         # * Define CNN and RNN
-        cnn = SWRAN_Block(in_ch, out_ch, dropout=cnn_dropout,
+        cnn = custom_cnn or SWRAN_Block(in_ch, out_ch, dropout=cnn_dropout,
                           return_top=True, sigmoid_out=False, grid_size=self._grid_size)
-        rnn = Transformer_rater(in_ch=2048, dropout=rnn_dropout, out_ch=out_ch)
+        rnn = custom_rnn or Transformer_rater(in_ch=2048, dropout=rnn_dropout, out_ch=out_ch)
 
         # Useless variables
         # - iter_limit
@@ -524,6 +524,13 @@ def create_rAIdiologist_v5():
 def create_rAIdiologist_v5_1():
     r"""This version does output channel = 2"""
     return rAIdiologist_Transformer(1, 1)
+
+def create_rAIdiologist_v5_1_focused():
+    r"""This version does output channel = 2"""
+    return rAIdiologist_Transformer(1, 1,
+                                    custom_cnn=SWRAN_Block_Focused(1, 1, dropout=0.2,
+                                                return_top=True, sigmoid_out=False, grid_size=[8,8]),
+                                    grid_size=[8,8])
 
 def create_old_rAI():
     cnn = SlicewiseAttentionRAN_old(1, 1, exclude_fc=False, return_top=False)

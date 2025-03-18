@@ -424,3 +424,54 @@ class SWRAN_Block(SlicewiseAttentionRAN):
         return super().forward_top(B, nonzero_slice, x)
 
 
+class SWRAN_Block_Focused(SWRAN_Block):
+    def __init__(self, *args, **kwargs):
+        r"""This focused network is used to zoom in the primary tumor. It performs a more focused inspection instead of
+        reading the entire image.
+        """
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x):
+        r"""Expect input (B x in_ch x H x W x S), output (B x out_ch)"""
+        B = x.shape[0]
+        while x.dim() < 5:
+            x = x.unsqueeze(0)
+        nonzero_slice, _ = self.get_nonzero_slices(x)
+
+        x = self.in_conv1(x)
+
+        # Construct slice weight
+        x_w = self.in_sw(x).view(B, -1)
+        if self.save_weight:
+            self.x_w = x_w.data.cpu()
+
+        # Resume dimension
+        x = self.in_conv2(x)
+
+        x = self.att1(x)
+        x = self.r1(x)
+        x = self.att2(x)
+        x = self.r2(x)
+        x = self.att3(x)
+
+        # * Apply slicewise weight before final conv
+        # Permute the axial dimension to the last
+        x = F.max_pool3d(x, [2, 2, 1], stride=[2, 2, 1])
+        x = x * einops.rearrange(x_w, 'b sc -> b 1 1 1 sc').expand_as(x)
+
+        x = self.out_conv1(x)
+        x = self.pre_top_maxpool(x) # this is for designed for ViT
+
+        if x.dim() < 3:
+            x = x.unsqueeze(0)
+
+        if not self.exclude_top:
+            if self.return_top:
+                sw_prediction = x
+            x = self.forward_top(B, nonzero_slice, x)
+        if self.sigmoid_out:
+            x = torch.sigmoid(x)
+        if self.return_top:
+            return x, sw_prediction
+        else:
+            return x

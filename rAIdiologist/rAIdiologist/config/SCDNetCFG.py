@@ -125,3 +125,5 @@ class SCDControllerCFG(PMIControllerCFG):
     plotter_init_meta = {
         'description': "rAIdiologists training project.",
     }
+
+    flags_file = 'flags_scdense.yaml'

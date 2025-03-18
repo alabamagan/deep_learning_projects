@@ -3,7 +3,8 @@ import os
 from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolver
 from pytorch_med_imaging.inferencers import BinaryClassificationInferencer, ClassificationInferencer
 from pytorch_med_imaging.controller import PMIControllerCFG
-from pytorch_med_imaging.pmi_data_loader import PMIImageFeaturePairLoader, PMIImageFeaturePairLoaderCFG
+from pytorch_med_imaging.pmi_data_loader import (PMIImageFeaturePairLoader, PMIImageFeaturePairLoaderCFG,
+                                                 PMITorchioDataLoader, PMITorchioDataLoaderCFG)
 from pytorch_med_imaging.solvers.earlystop import LossReferenceEarlyStop
 from .network.rAIdiologist import rAIdiologist
 from .network.slicewise_ran import SlicewiseAttentionRAN
@@ -45,12 +46,12 @@ data_loader = PMIImageFeaturePairLoaderCFG(
 
 # For testing
 data_loader_test = PMIImageFeaturePairLoaderCFG(
-    input_dir     = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/01.NyulNormalized/',
-    probmap_dir   = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/00.HuangMask/',
-    target_dir    = './NPC_Segmentation/99.Testing/NPC_Screening/v1/Datasheet_v2.csv',
+    input_dir     = data_loader.input_dir,
+    probmap_dir   = data_loader.probmap_dir,
+    target_dir    = data_loader.target_dir,
+    target_column = data_loader.target_column,
+    id_globber    = data_loader.id_globber,
     augmentation  = './rAIdiologist_transform_inf.yaml',
-    target_column = 'is_malignant',
-    id_globber    = "^[a-zA-Z]{0,3}[0-9]+",
     tio_queue_kwargs = dict(            # dict passed to ``tio.Queue``
         max_length             = 15,
         samples_per_volume     = 1,
@@ -61,6 +62,57 @@ data_loader_test = PMIImageFeaturePairLoaderCFG(
         verbose                = True,
     )
 )
+
+data_loader_focused = PMITorchioDataLoaderCFG(
+    input_data = {
+        'input': './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/01.NyulNormalized/',
+        'gt': ('./NPC_Segmentation/99.Testing/NPC_Screening/v1/Datasheet_v2.csv', 'is_malignant'),
+        'probmap':  './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2_SCDensnet/T2WFS_TRA',
+    },
+    input_dtypes = {
+        'probmap': 'uint8'
+    },
+    master_data_key = 'gt',
+    augmentation='./rAIdiologist_transform_focused_train.yaml',
+    id_globber    = "^[a-zA-Z]{0,3}[0-9]+",
+    ignore_missing_ids = True,
+    sampler='weighted',  # Unset sampler to load the whole image
+    sampler_kwargs=dict(
+        patch_size=[224, 224, 16]
+    ),
+    tio_queue_kwargs=dict(  # dict passed to ``tio.Queue``
+        max_length=15,
+        samples_per_volume=1,
+        num_workers=min(12, os.cpu_count() * 3 // 4),
+        shuffle_subjects=True,
+        shuffle_patches=True,
+        start_background=True,
+        verbose=True,
+    )
+)
+
+data_loader_focused_test = PMITorchioDataLoaderCFG(
+    input_data      = data_loader_focused.input_data,
+    input_dtypes    = data_loader_focused.input_dtypes,
+    master_data_key = data_loader_focused.master_data_key,
+    id_globber      = data_loader_focused.id_globber,
+    augmentation    = './rAIdiologist_transform_focused_inf.yaml',
+    ignore_missing_ids = True,
+    sampler         = 'weighted'                         , # Unset sampler to load the whole image
+    sampler_kwargs=dict(
+        patch_size=[224, 224, 16]
+    ),
+    tio_queue_kwargs=dict(  # dict passed to ``tio.Queue``
+        max_length=15,
+        samples_per_volume=1,
+        num_workers=min(12, os.cpu_count() * 3 // 4),
+        shuffle_subjects=True,
+        shuffle_patches=True,
+        start_background=True,
+        verbose=True,
+    )
+)
+
 
 class MySolverCFG(rAIdiologistSolverCFG):
     r"""This is created to cater for the configuration of rAIdiologist network"""
@@ -114,7 +166,7 @@ class MyControllerCFG(PMIControllerCFG):
     compile_net = False
 
     # For plotting
-    plotting        = False
+    plotting        = True
     plotter_type = 'neptune'
     plotter_init_meta = {
         'description': "rAIdiologists training project."
@@ -122,6 +174,33 @@ class MyControllerCFG(PMIControllerCFG):
 
 
 class PretrainControllerCFG(MyControllerCFG):
+    # solver_cls     = BinaryClassificationSolver
+    # inferencer_cls = BinaryClassificationInferencer
+    cp_load_dir    = MyControllerCFG.cp_load_dir.replace('.pt', '_pretrain.pt')
+    cp_save_dir    = MyControllerCFG.cp_save_dir.replace('.pt', '_pretrain.pt')
+    output_dir     = MyControllerCFG.output_dir + "_pretrain"
+    # Override some settings
+    solver_cfg     = MySolverCFG()
+    solver_cfg.rAI_pretrain_mode = True
+    solver_cfg.rAI_fixed_mode = 0
+
+
+class rAIControllerFocusedCFG(MyControllerCFG):
+    _data_loader_cfg = data_loader_focused
+    _data_loader_inf_cfg = data_loader_focused_test
+    data_loader_val_cfg = data_loader_focused_test
+    data_loader_cls =  PMITorchioDataLoader
+
+    cp_load_dir = './Backup/rAIdiologist-focused_{fold_code}.pt'
+    cp_save_dir = './Backup/rAIdiologist-focused_{fold_code}.pt'
+    rAI_pretrained_CNN = './Backup/rAIdiologist-focused_{fold_code}_pretrain.pt'
+
+    plotter_init_meta = {
+        'description': "rAIdiologists focused training project."
+    }
+
+
+class FocusedPretrainControllerCFG(rAIControllerFocusedCFG):
     # solver_cls     = BinaryClassificationSolver
     # inferencer_cls = BinaryClassificationInferencer
     cp_load_dir    = MyControllerCFG.cp_load_dir.replace('.pt', '_pretrain.pt')
