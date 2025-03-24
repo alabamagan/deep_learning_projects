@@ -35,6 +35,10 @@ st.set_page_config(layout="wide")
 st.write("# NPC Screening Results View")
 st.write(
     """
+    This is a small UI that is used to view the segmentation and prediction results of SCDense net.
+    
+    To use it, put the images and segmentations in separate directories, paired by a regex globbed UID. 
+    Set the directories to correctly, including the CSV results, and the viewer will show the results with segmentation.
     
     """
 )

@@ -2,8 +2,13 @@ import cv2
 import numpy as np
 import SimpleITK as sitk
 import streamlit as st
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from typing import List, Tuple
+import rich
 
 logger = st.logger.get_logger("App")
+
 
 def make_grid(array, nrows=None, ncols=None, padding=2, normalize=False):
     """
@@ -52,24 +57,25 @@ def make_grid(array, nrows=None, ncols=None, padding=2, normalize=False):
     return grid
 
 
-def draw_contour(grayscale_image, labeled_segmentation, width=1):
+def draw_contour(labeled_segmentation: np.ndarray, width: int = 1, alpha: float = 0.5) -> np.ndarray:
     """
-    Draw contours from a labeled segmentation image onto a grayscale image using a qualitative color map.
+    Draw contours from a labeled segmentation image and return an RGBA image.
 
     Args:
-        grayscale_image (np.ndarray): The grayscale image (H x W).
         labeled_segmentation (np.ndarray): The labeled segmentation image (H x W).
         width (int): The width of the contour lines.
+        alpha (float): The opacity of the contours (0.0 to 1.0).
 
     Returns:
-        np.ndarray: The grayscale image with the contour overlay.
+        np.ndarray: RGBA image containing only the contours (H x W x 4).
     """
     # Ensure labeled_segmentation is of type np.uint8
     if labeled_segmentation.dtype != np.uint8:
         labeled_segmentation = labeled_segmentation.astype(np.uint8)
 
-    # Convert grayscale image to BGR for contour drawing
-    contour_image = cv2.cvtColor(grayscale_image, cv2.COLOR_GRAY2BGR)
+    # Create a transparent RGBA image
+    height, width_img = labeled_segmentation.shape
+    contour_image = np.zeros((height, width_img, 4), dtype=np.uint8)
 
     # Find unique labels (excluding background)
     unique_labels = np.unique(labeled_segmentation)
@@ -77,26 +83,26 @@ def draw_contour(grayscale_image, labeled_segmentation, width=1):
 
     # Generate a colormap
     colormap = [
-        (0, 0, 0),        # Black for label 0 (background)
-        (255, 0, 0),      # Red for label 1
-        (0, 255, 0),      # Green for label 2
-        (0, 0, 255),      # Blue for label 3
-        (255, 255, 0),    # Cyan for label 4
-        (255, 0, 255),    # Magenta for label 5
-        (0, 255, 255),    # Yellow for label 6
-        (128, 0, 0),      # Dark Red for label 7
-        (0, 128, 0),      # Dark Green for label 8
-        (0, 0, 128),      # Dark Blue for label 9
-        (128, 128, 0),    # Olive for label 10
-        (128, 0, 128),    # Purple for label 11
-        (0, 128, 128),    # Teal for label 12
-        (192, 192, 192),  # Light Grey for label 13
-        (128, 128, 128),  # Grey for label 14
-        (255, 165, 0),    # Orange for label 15
-        (255, 20, 147),   # Deep Pink for label 16
-        (135, 206, 235),  # Sky Blue for label 17
-        (255, 105, 180),  # Hot Pink for label 18
-        (75, 0, 130)     # Indigo for label 19
+        (0, 0, 0, 0),  # Transparent for label 0 (background)
+        (255, 255, 0, 255),  # Red for label 1
+        (0, 255, 0, 255),  # Green for label 2
+        (0, 0, 255, 255),  # Blue for label 3
+        (255, 255, 0, 255),  # Cyan for label 4
+        (255, 0, 255, 255),  # Magenta for label 5
+        (255, 55, 25, 255),  # Light Orange for label 6
+        (128, 0, 0, 255),  # Dark Red for label 7
+        (0, 128, 0, 255),  # Dark Green for label 8
+        (0, 0, 128, 255),  # Dark Blue for label 9
+        (128, 128, 0, 255),  # Olive for label 10
+        (128, 0, 128, 255),  # Purple for label 11
+        (0, 128, 128, 255),  # Teal for label 12
+        (192, 192, 192, 255),  # Light Grey for label 13
+        (128, 128, 128, 255),  # Grey for label 14
+        (255, 165, 0, 255),  # Orange for label 15
+        (255, 20, 147, 255),  # Deep Pink for label 16
+        (135, 206, 235, 255),  # Sky Blue for label 17
+        (255, 105, 180, 255),  # Hot Pink for label 18
+        (75, 0, 130, 255)  # Indigo for label 19
     ]
     colormap = {i: colormap[i] for i in np.arange(len(colormap))}
 
@@ -109,24 +115,19 @@ def draw_contour(grayscale_image, labeled_segmentation, width=1):
 
         # Use the colormap to get the color for the current label
         color_index = label % 20  # Use modulo to fit within the color range
-        color = colormap[color_index]  # Get BGR color from colormap
+        color = colormap[color_index]  # Get RGBA color from colormap
 
         # Draw contours in the specified color
         cv2.drawContours(contour_image, contours, -1, color, width)
 
+    # Apply alpha channel
+    contour_image[..., 3] = (contour_image[..., 3] * alpha).astype(np.uint8)
+
     return contour_image
 
 
-def rescale_intensity(image, lower=25, upper=99):
-    """Rescale the intensity of an image to map the 5th and 95th percentiles to 0 and 255."""
-    lower, upper = np.percentile(image, [lower, upper])
-    if lower == upper:
-        raise ValueError("Min point and Max point are the same")
-    rescaled_image = np.clip((image - lower) / (upper - lower) * 255, 0, 255)
-    return rescaled_image.astype(np.uint8)
-
-
-def crop_image_to_segmentation(mri_image: np.ndarray, seg_image: np.ndarray, padding: int = 50) -> (np.ndarray, np.ndarray):
+def crop_image_to_segmentation(mri_image: np.ndarray, seg_image: np.ndarray, padding: int = 50) -> (
+np.ndarray, np.ndarray):
     """
     Crop the MRI and segmentation images to the bounding box of the segmentation
     with specified padding.
@@ -165,7 +166,10 @@ def crop_image_to_segmentation(mri_image: np.ndarray, seg_image: np.ndarray, pad
 
     return cropped_mri_image, cropped_seg_image
 
-def crop_image_to_segmentation_sitk(mri_image: sitk.Image, seg_image: sitk.Image, padding: int = 50) -> (sitk.Image, sitk.Image):
+
+def crop_image_to_segmentation_sitk(mri_image: sitk.Image,
+                                    seg_image: sitk.Image,
+                                    padding: int = 50) -> (sitk.Image, sitk.Image):
     """
     Crop the MRI image to the bounding box of the segmented area in the
     segmentation image.
@@ -226,3 +230,192 @@ def crop_image_to_segmentation_sitk(mri_image: sitk.Image, seg_image: sitk.Image
     cropped_seg = sitk.RegionOfInterest(seg_image, [x_max - x_min, y_max - y_min, z_max - z_min], [x_min, y_min, z_min])
 
     return cropped_mri, cropped_seg
+
+
+def overlay_images(background, overlay, alpha=0.5):
+    """
+    Overlay a colored RGBA image on top of a grayscale background image using OpenCV.
+    Optimized for the specific case of colored overlay on grayscale background.
+
+    Args:
+        background (np.ndarray): Grayscale background image, shape (H, W)
+        overlay (np.ndarray): Colored overlay image with alpha channel, shape (H, W, 4)
+        alpha (float): Transparency factor in range [0, 1], where 0 is fully transparent
+                      and 1 is fully opaque
+
+    Returns:
+        np.ndarray: RGB image with overlay applied, shape (H, W, 3)
+    """
+    import cv2
+    import numpy as np
+
+    # Assert input shapes align
+    if background.shape[:2] != overlay.shape[:2]:
+        logger.error(f"Background and overlay must have the same shape: {background.shape = } | {overlay.shape = }")
+        raise ValueError("Background and overlay must have the same shape.")
+
+    # Convert background to 8-bit if it's not already
+    if background.dtype != np.uint8:
+        if np.issubdtype(background.dtype, np.integer):
+            # Convert from other integer types
+            max_val = np.iinfo(background.dtype).max
+            background = (background.astype(np.float32) / max_val * 255).astype(np.uint8)
+        elif background.dtype == np.float32 or background.dtype == np.float64:
+            # Convert from float
+            if np.max(background) <= 1.0:
+                background = (background * 255).astype(np.uint8)
+            else:
+                background = np.clip(background, 0, 255).astype(np.uint8)
+
+    # Convert overlay to 8-bit RGBA if it's not already
+    if overlay.dtype != np.uint8:
+        if np.issubdtype(overlay.dtype, np.integer):
+            # Convert from other integer types
+            max_val = np.iinfo(overlay.dtype).max
+            overlay = (overlay.astype(np.float32) / max_val * 255).astype(np.uint8)
+        elif overlay.dtype == np.float32 or overlay.dtype == np.float64:
+            # Convert from float
+            if np.max(overlay) <= 1.0:
+                overlay = (overlay * 255).astype(np.uint8)
+            else:
+                overlay = np.clip(overlay, 0, 255).astype(np.uint8)
+
+    # Ensure background has 4 channels (RGBA)
+    if background.ndim == 3:
+        if background.shape[2] == 3:
+            background = cv2.cvtColor(background, cv2.COLOR_BGR2BGRA)
+
+    # Ensure overlay has 4 channels (RGBA)
+    if overlay.ndim == 2:
+        # If overlay is grayscale, convert to RGBA
+        overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_GRAY2BGR)
+        alpha_channel = np.ones(overlay.shape + (1,), dtype=np.uint8) * 255
+        overlay = np.concatenate([overlay_rgb, alpha_channel], axis=2)
+    elif overlay.shape[2] == 3:
+        # If overlay is RGB, add alpha channel
+        alpha_channel = np.ones(overlay.shape[:2] + (1,), dtype=np.uint8) * 255
+        overlay = np.concatenate([overlay, alpha_channel], axis=2)
+
+    # Convert grayscale background to BGR for OpenCV
+    background_rgb = cv2.cvtColor(background, cv2.COLOR_BGRA2BGR)
+
+    # Extract RGB and alpha channels from overlay
+    overlay_rgb = overlay[..., :3]
+    overlay_alpha = overlay[..., 3]
+
+    # Adjust alpha by the provided alpha parameter
+    overlay_alpha = (overlay_alpha.astype(np.float32) * alpha).astype(np.uint8)
+
+    # Create a mask from the alpha channel
+    mask = overlay_alpha > 0
+
+    # Create result image
+    result = background_rgb.copy()
+
+    # Apply blending only where mask is True
+    if np.any(mask):
+        # Create a 3-channel alpha for vectorized operations
+        alpha_3channel = np.zeros_like(result, dtype=np.float32)
+        alpha_3channel[mask] = overlay_alpha[mask, np.newaxis].astype(np.float32) / 255.0
+
+        # Apply alpha blending formula: result = bg * (1 - alpha) + overlay * alpha
+        result = (background_rgb.astype(np.float32) * (1 - alpha_3channel) +
+                  overlay_rgb.astype(np.float32) * alpha_3channel).astype(np.uint8)
+
+    return result
+
+
+def apply_jet_colormap(gray_image, with_alpha=True):
+    """
+    Apply the JET colormap to a grayscale image using OpenCV.
+    Makes lowest values fully transparent (alpha=0).
+    Robustly detects input value range (0-1 float or 0-255 integer).
+
+    Args:
+        gray_image (np.ndarray): Grayscale image with values in range [0, 1] or [0, 255]
+        with_alpha (bool): If True, return RGBA image; if False, return RGB image
+
+    Returns:
+        np.ndarray: RGBA or RGB image with JET colormap applied
+    """
+    import cv2
+    import numpy as np
+
+    # Store original image for alpha calculation
+    original_image = gray_image.copy()
+
+    # Convert input to 8-bit format required by cv2.applyColorMap
+    if gray_image.dtype != np.uint8:
+        if np.issubdtype(gray_image.dtype, np.integer):
+            # Convert from other integer types
+            max_val = np.iinfo(gray_image.dtype).max
+            gray_image_8bit = (gray_image.astype(np.float32) / max_val * 255).astype(np.uint8)
+        elif gray_image.dtype == np.float32 or gray_image.dtype == np.float64:
+            # Check if float image is in 0-1 range
+            if np.max(gray_image) <= 1.0:
+                gray_image_8bit = (gray_image * 255).astype(np.uint8)
+            else:
+                # Assume it's already in 0-255 range but needs conversion to uint8
+                gray_image_8bit = np.clip(gray_image, 0, 255).astype(np.uint8)
+    else:
+        # Already in uint8 format
+        gray_image_8bit = gray_image
+
+    # Ensure input is 2D (single channel)
+    if gray_image_8bit.ndim == 3:
+        if gray_image_8bit.shape[2] == 3:
+            gray_image_8bit = cv2.cvtColor(gray_image_8bit, cv2.COLOR_BGR2GRAY)
+        elif gray_image_8bit.shape[2] == 4:
+            gray_image_8bit = cv2.cvtColor(gray_image_8bit, cv2.COLOR_BGRA2GRAY)
+
+    # Apply JET colormap using OpenCV
+    colored_image = cv2.applyColorMap(gray_image_8bit, cv2.COLORMAP_JET)
+
+    # Convert to RGB (from BGR)
+    colored_image = cv2.cvtColor(colored_image, cv2.COLOR_BGR2RGB)
+
+    # If alpha channel is requested, add it
+    if with_alpha:
+        # Create alpha channel based on the original image values
+        # Normalize original image to 0-255 range for alpha calculation
+        if original_image.dtype != np.uint8:
+            if np.issubdtype(original_image.dtype, np.integer):
+                max_val = np.iinfo(original_image.dtype).max
+                alpha_values = (original_image.astype(np.float32) / max_val * 255)
+            elif original_image.dtype == np.float32 or original_image.dtype == np.float64:
+                if np.max(original_image) <= 1.0:
+                    alpha_values = original_image * 255
+                else:
+                    alpha_values = np.clip(original_image, 0, 255)
+        else:
+            alpha_values = original_image.astype(np.float32)
+
+        # Ensure alpha_values is 2D
+        if alpha_values.ndim == 3:
+            if alpha_values.shape[2] == 3:
+                alpha_values = cv2.cvtColor(alpha_values.astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
+            elif alpha_values.shape[2] == 4:
+                alpha_values = cv2.cvtColor(alpha_values.astype(np.uint8), cv2.COLOR_BGRA2GRAY).astype(np.float32)
+
+        # Create alpha channel where lowest values are transparent
+        min_val = np.min(alpha_values)
+        max_val = np.max(alpha_values)
+
+        if min_val < max_val:  # Avoid division by zero
+            # Scale alpha from 0 to 255 based on pixel values
+            # Values equal to min_val will have alpha=0 (fully transparent)
+            alpha_channel = np.round(((alpha_values - min_val) / (max_val - min_val)) * 255).astype(np.uint8)
+        else:
+            # If all values are the same, use a constant alpha
+            alpha_channel = np.ones_like(alpha_values, dtype=np.uint8) * 255
+
+        # Add alpha channel to the colored image
+        colored_image_rgba = np.zeros(colored_image.shape[:2] + (4,), dtype=np.uint8)
+        colored_image_rgba[..., :3] = colored_image
+        colored_image_rgba[..., 3] = alpha_channel
+
+        return colored_image_rgba
+    else:
+        # Return RGB image
+        return colored_image
+

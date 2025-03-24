@@ -8,11 +8,14 @@ import SimpleITK as sitk
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import cv2
 
-from visualization import *
 from pathlib import Path
 from mnts.utils import get_fnames_by_IDs, get_unique_IDs
-from image_utils import create_overlay_image, check_image_metadata, save_image
+
+# Custom
+from image_utils import *
+from visualization import *
 
 import streamlit as st
 from pprint import pprint, pformat
@@ -26,6 +29,7 @@ import pydantic
 import rich
 from rich.logging import RichHandler
 from rich.traceback import install
+
 install()
 
 
@@ -33,14 +37,17 @@ class Configuration(pydantic.BaseModel):
     # Use ClassVar to mark class variables
     state_file: ClassVar[str] = ".session_state.json"  # File path to save/load the session state
     mapper: ClassVar[Dict[str, str]] = {
-        'Image Directory': 'IMAGE_DIR',  # File path holding both predictions and attentions
-        'Prediction CSV Directory': 'CSV_DIR',
-        'ID Globber Regex': 'ID_GLOBBER'
+        'Image Directory': 'IMAGE_DIR',  # File path holding original images
+        'Attention Map Directory': 'ATTN_DIR',  # File path holding attention maps (optional)
+        'Segmentation Directory': 'SEGMENTATION_DIR',  # File path holding segmentations (optional)
+        'Prediction CSV Directory': 'CSV_DIR',  # File path holding predictions
+        'ID Globber Regex': 'ID_GLOBBER'  # Regex to match the ID of the images and segmentations
     }
     GRID_COLS: ClassVar[int] = 5
     DEFAULT_WINDOW_RANGE: ClassVar[Tuple[int, int]] = (25, 99)
     DEFAULT_ATTN_THRESHOLD: ClassVar[Tuple[int, int]] = (15, 55)
     DEFAULT_OPACITY: ClassVar[float] = 0.5
+    DEFAULT_CONTOUR_ALPHA: ClassVar[float] = 0.8
     ATTN_MIN_VALUE: ClassVar[int] = 0
     ATTN_MAX_VALUE: ClassVar[int] = 255
     HIST_LOWER_PERCENTILE: ClassVar[int] = 2
@@ -48,6 +55,8 @@ class Configuration(pydantic.BaseModel):
 
     # File paths - instance variables
     IMAGE_DIR: str = '.'
+    ATTN_DIR: str = ''  # Optional attention map directory
+    SEGMENTATION_DIR: str = ''  # Optional segmentation directory
     CSV_DIR: str = 'results.csv'
     ID_GLOBBER: str = r"\w{0,5}\d+"
 
@@ -82,13 +91,13 @@ st.write(
     """
     This is a small UI that is used to view the prediction results and the self attention the transformer is giving.
     You should have the results prepared in the  
-    
+
     # Results Viewer (results_viewer_rAI-trans.py) Overview
-    
+
     This Streamlit application is an interactive tool for visualizing and analyzing rAIdiologist predictions and transformer self-attention mechanisms.
-    
+
     ## Main Features
-    
+
     - **Image and Attention Map Visualization**: Displays medical images with overlaid transformer attention maps
     - **Prediction Analysis**: Shows model prediction outputs compared to ground truth labels
     - **Filtering Options**: Filter cases by true positives (TP), true negatives (TN), false positives (FP), or false negatives (FN)
@@ -98,12 +107,12 @@ st.write(
       - Adjust window range and attention thresholds
       - Control attention map transparency
     """)
-with st.expander("Technical Details"):
+with st.expander("📃 Technical Details"):
     st.write(
         """
-        
-        ## Technical Details
-        
+
+        # 📃 Technical Details
+
         - **Data Loading**: Loads image and attention map pairs from specified directories
         - **Statistical Analysis**: Displays metrics like accuracy, sensitivity, and specificity
         - **Interactive Elements**:
@@ -111,9 +120,9 @@ with st.expander("Technical Details"):
           - Navigation buttons for browsing cases
           - Histogram display of attention value distribution
           - Image saving functionality
-        
-        ## File Structure Example
-        
+
+        ## 📁 File Structure Example
+
         ```
         project/
         ├── results_viewer_rAI-trans.py    # Main application file
@@ -126,9 +135,12 @@ with st.expander("Technical Details"):
         └── utils/
             └── image_processing.py        # Helper functions for image manipulation
         ```
-        
-        ## Display Settings
-               
+
+        ⚠️ Format of attention maps should be {ID}_pb_pred.nii.gz. The attention map can be in the same folder as the images
+        or a separate folder.
+
+        ## 🖥️ Display Settings
+
         | Category | Feature | Description |
         |----------|---------|-------------|
         | **Display Settings** | **Window Level Controls** | |
@@ -250,26 +262,119 @@ def load_image_attention_pairs(img_dir: Path, id_globber: str = r"\w+\d+"):
     return paired
 
 
-def check_image_metadata(img1: sitk.Image, img2: sitk.Image, tolerance=1e-3):
-    r"""This checks the meta information of the image and the segmentation to make sure they are the same."""
-    # Check metadata with tolerance
-    spacing_match = np.all(np.isclose(img1.GetSpacing(), img2.GetSpacing(), atol=tolerance))
-    direction_match = np.all(np.isclose(img1.GetDirection(), img2.GetDirection(), atol=tolerance))
-    origin_match = np.all(np.isclose(img1.GetOrigin(), img2.GetOrigin(), atol=tolerance))
-    size_match = np.array_equal(img1.GetSize(), img2.GetSize())
+def create_display_image(img_path, attn_path=None, seg_path=None,
+                         window_range=(25, 99), attn_threshold=(15, 55),
+                         alpha=0.5, head_settings=None, ncols=5, contour_alpha=0.8):
+    """Create display image with optional attention map and segmentation overlay.
 
-    if all([spacing_match, direction_match, origin_match, size_match]):
-        st.success("All metadata matches: spacing, direction, and origin.")
+    Args:
+        img_path: Path to the source image
+        attn_path: Optional path to attention map
+        seg_path: Optional path to segmentation mask
+        window_range: Tuple of (lower, upper) percentiles for window level
+        attn_threshold: Tuple of (min, max) for attention map thresholding
+        alpha: Opacity of overlays
+        head_settings: Dict containing attention head selection settings
+        ncols: Number of columns in the grid display
+
+    Returns:
+        overlayed: Final image with all overlays
+        attn_map_target: Processed attention map (or None if no attention)
+        img_sitk: SimpleITK image object
+    """
+    # Handle attention map overlay
+    if attn_path is not None:
+        overlayed, attn_map_target, img_sitk = create_overlay_image(
+            img_path,
+            window_range=window_range,
+            attn_path=attn_path,
+            attn_threshold=attn_threshold,
+            alpha=alpha,
+            head_settings=head_settings
+        )
     else:
-        if not spacing_match:
-            st.error(f"Spacing does not match: {img1.GetSpacing() = } | {img2.GetSpacing() = }")
-        if not direction_match:
-            st.error(f"Direction does not match: {img1.GetDirection() = } | {img2.GetDirection() = }")
-        if not origin_match:
-            st.error(f"Origin does not match: {img1.GetOrigin() = } | {img2.GetOrigin() = }")
-        if not size_match:
-            st.error(f"Size does not match: {img1.GetSize() = } | {img2.GetSize() = }")
-        return False
+        # Load and process base image only
+        image = sitk.ReadImage(str(img_path))
+        image = sitk.DICOMOrient(image, 'LPS')
+        image = sitk.GetArrayFromImage(image)
+        image = rescale_intensity(make_grid(image, ncols=ncols),
+                                  lower=window_range[0],
+                                  upper=window_range[1])
+        overlayed = image
+        attn_map_target = None
+        img_sitk = None
+
+    # Handle segmentation overlay
+    if seg_path is not None and contour_alpha > 0:
+        img_sitk = sitk.ReadImage(str(img_path))
+        img_sitk = sitk.DICOMOrient(img_sitk, 'LPS')
+        seg_img = sitk.ReadImage(str(seg_path))
+        seg_img = sitk.DICOMOrient(seg_img, 'LPS')
+
+        seg_img = sitk.Resample(seg_img, img_sitk)
+        seg_img = sitk.GetArrayFromImage(seg_img)
+
+        seg_img = make_grid(seg_img, ncols=ncols)
+        seg_contours = draw_contour(seg_img, alpha=1, width=2)
+        overlayed = overlay_images(overlayed, seg_contours, alpha=contour_alpha)
+
+    return overlayed, attn_map_target, img_sitk
+
+
+def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
+                      window_range, attn_threshold, alpha, head_settings):
+    """Save all images in the filtered list to the specified directory.
+
+    Args:
+        filtered_intersection: List of IDs to process
+        paired: Dictionary mapping IDs to (image_path, attention_path)
+        seg_paired: Dictionary mapping IDs to (image_path, segmentation_path)
+        output_dir: Path to save the images
+        window_range: Tuple of (lower, upper) for window level
+        attn_threshold: Tuple of (min, max) for attention threshold
+        alpha: Opacity for overlays
+        head_settings: Dictionary containing attention head settings
+
+    Returns:
+        List of successfully saved image paths
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_paths = []
+    progress_bar = st.progress(0)
+
+    for idx, selected_pair in enumerate(filtered_intersection):
+        try:
+            # Get paths
+            img_path, attn_path = paired[selected_pair]
+            seg_path = seg_paired.get(selected_pair, None) if len(seg_paired) else None
+
+            # Create the image
+            overlayed, _, _ = create_display_image(
+                img_path=img_path,
+                attn_path=attn_path,
+                seg_path=seg_path,
+                window_range=window_range,
+                attn_threshold=attn_threshold,
+                alpha=alpha,
+                head_settings=head_settings
+            )
+
+            # Save the image
+            output_path = output_dir / f"{selected_pair}_overlay.png"
+            cv2.imwrite(str(output_path), cv2.cvtColor(overlayed, cv2.COLOR_BGR2RGB))
+            saved_paths.append(output_path)
+
+            # Update progress
+            progress_bar.progress((idx + 1) / len(filtered_intersection))
+
+        except Exception as e:
+            st.error(f"Failed to save image for ID {selected_pair}: {e}")
+            logger.exception(e)
+            break
+
+    return saved_paths
 
 
 def build_configurations():
@@ -305,11 +410,14 @@ def build_configurations():
                         value=str(loaded_state.get(v.lower(), getattr(conf_instance, v)))
                     )))
                 else:
-                    # Otherwise, it's just regular text
-                    setattr(st.session_state, v.lower(), loaded_state.get(v.lower(), getattr(conf_instance, v)))
+                    # Otherwise, it's just regular text but still needs an input field
+                    setattr(st.session_state, v.lower(), st.text_input(
+                        k,
+                        value=loaded_state.get(v.lower(), getattr(conf_instance, v))
+                    ))
 
         #  Add some buttons
-        col1, col2, _ = st.columns([1, 1, 3])
+        col1, _, _ = st.columns([1, 1, 3])
         with col1:
             if st.button("Save States", use_container_width=True):
                 # Dynamically get all attributes of the Configuration class and read corresponding values from session_state
@@ -324,101 +432,6 @@ def build_configurations():
                             setattr(conf_instance, field_name, value)
                 conf_instance.save_to_json(Configuration.state_file)
                 st.rerun()
-
-
-@st.cache_data
-def create_overlay_image(image_path: str,
-                         attn_path: str,
-                         window_range: Tuple[int, int],
-                         attn_threshold: Tuple[int, int],
-                         alpha: float,
-                         head_settings: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
-    """Create an overlay image display
-
-    Args:
-        image_path: str
-            Path to the original image
-        attn_path: str
-            Path to the attention map
-        window_range: Tuple[int, int]
-            Image window range (lower, upper)
-        attn_threshold: Tuple[int, int]
-            Attention map threshold range (min, max)
-        alpha: float
-            Opacity of attention map
-        head_settings: Dict[str, Any]
-            Settings for attention heads, including:
-            - use_max: Whether to use maximum value
-            - use_avg: Whether to use average value
-            - head_idx: Index of selected attention head
-
-    Returns:
-        Tuple containing:
-        - overlayed: Final overlaid image
-        - attn_map_target: Processed attention map (for histogram)
-    """
-    # Load image
-    image = sitk.ReadImage(str(image_path))
-    attn_map_ori = sitk.ReadImage(str(attn_path))
-    image = sitk.DICOMOrient(image, 'LPS')
-    attn_map = sitk.DICOMOrient(attn_map_ori, 'LPS')
-
-    # Resample image to match attention map
-    image = sitk.Resample(image, attn_map)
-
-    # Check metadata match
-    same_spacial = check_image_metadata(image, attn_map)
-    if not same_spacial:
-        st.warning("Resampling...")
-        attn_map = sitk.Resample(attn_map, image)
-
-    # Convert to numpy array
-    image = sitk.GetArrayFromImage(image)
-    np_attn_map = sitk.GetArrayFromImage(attn_map)
-
-    # Get number of attention heads
-    num_heads = np_attn_map.shape[-1]
-    st.session_state['num_heads'] = num_heads
-
-    # Select attention map based on settings
-    if head_settings['use_max']:
-        attn_map_target = np_attn_map.max(axis=-1)
-    elif head_settings['use_avg']:
-        attn_map_target = np_attn_map.mean(axis=-1)
-    else:
-        attn_map_target = np_attn_map[..., head_settings['head_idx']]
-
-    # Create grid
-    ncols = 5
-    image = rescale_intensity(make_grid(image, ncols=ncols),
-                              lower=window_range[0],
-                              upper=window_range[1])
-    attn_map_grid = make_grid(attn_map_target, ncols=ncols, normalize=False)
-
-    # Normalize attention map
-    attn_min_norm = attn_threshold[0] / 255.0
-    attn_max_norm = attn_threshold[1] / 255.0
-
-    # Scale attention map
-    attn_min_val = np.min(attn_map_grid)
-    attn_max_val = np.max(attn_map_grid)
-
-    if attn_min_val >= attn_max_val:
-        st.error("All attention values are the same")
-        st.stop()
-
-    # Normalize and threshold attention map
-    attn_map_norm = (attn_map_grid - attn_min_val) / (attn_max_val - attn_min_val)
-    attn_map_thresholded = np.clip(
-        (attn_map_norm - attn_min_norm) / (attn_max_norm - attn_min_norm + 1e-8),
-        0, 1
-    )
-
-    # Create final overlay
-    colored_attn = apply_jet_colormap(attn_map_thresholded)
-    overlayed = overlay_images(image, colored_attn, alpha)
-
-    return overlayed, attn_map_target
 
 
 if 'initialized' not in st.session_state:
@@ -442,7 +455,34 @@ image_dir = st.session_state.image_dir
 id_globber = st.session_state.id_globber
 
 if image_dir.is_dir():
-    paired = load_image_attention_pairs(image_dir, id_globber)
+    # Load image files
+    all_files = list(image_dir.rglob("*nii.gz"))
+    image_files = {re.search(id_globber, f.name).group(): f
+                   for f in all_files if 'image' in f.name.lower()}
+
+    # Load attention maps if directory is configured
+    attn_files = {}
+    if st.session_state.attn_dir and Path(st.session_state.attn_dir).is_dir():
+        attn_files = {re.search(id_globber, f.name).group(): f
+                      for f in Path(st.session_state.attn_dir).rglob("*nii.gz")
+                      if 'pb_pred' in f.name.lower()}
+        st.success(f"Successfully loaded {len(attn_files)} attention maps")
+
+        # Check for images without attention maps
+        images_without_attn = set(image_files.keys()) - set(attn_files.keys())
+        if images_without_attn:
+            st.warning(
+                f"Found {len(images_without_attn)} images without attention maps: {','.join(sorted(images_without_attn))}")
+
+    # Create pairs dictionary
+    if attn_files:
+        # If attention maps are available, create pairs with both
+        intersection = list(set(image_files.keys()) & set(attn_files.keys()))
+        paired = {sid: (image_files[sid], attn_files[sid]) for sid in intersection}
+    else:
+        # If no attention maps, just use images
+        paired = {sid: (image_files[sid], None) for sid in image_files.keys()}
+
     intersection = list(paired.keys())
     intersection.sort()
 
@@ -457,6 +497,27 @@ else:
     st.error(f"Directory `{str(image_dir)}` does not exist!")
     st.stop()
 
+# Load segmentation pairs if segmentation directory is configured
+seg_dir = st.session_state.segmentation_dir
+seg_paired = {}
+if seg_dir and Path(seg_dir).is_dir():
+    try:
+        seg_files = {re.search(id_globber, f.name).group(): f
+                     for f in Path(seg_dir).rglob("*nii.gz")}
+
+        # Check for images without segmentations
+        images_without_seg = set(image_files.keys()) - set(seg_files.keys())
+        if images_without_seg:
+            st.warning(
+                f"Found {len(images_without_seg)} images without segmentation masks: {','.join(sorted(images_without_seg))}")
+
+        seg_paired = {sid: (image_files[sid], seg_files[sid])
+                      for sid in set(image_files.keys()) & set(seg_files.keys())}
+        st.success(f"Successfully loaded {len(seg_paired)} segmentation masks")
+    except Exception as e:
+        if len(seg_files) > 0:
+            st.warning(f"Failed to load segmentation masks: {e}")
+
 # Load the csv file
 csv_dir = st.session_state.csv_dir
 if csv_dir.is_file():
@@ -468,13 +529,13 @@ else:
 # -- Streamlit app
 st.title("Image and Attention Map Viewer")
 
-# 初始化 session state
+# Initialize session state
 if 'selection_index' not in st.session_state:
     st.session_state.selection_index = 0
 if 'filtered_intersection' not in st.session_state:
     st.session_state.filtered_intersection = intersection
 
-# 選擇框 - 使用過濾後的列表
+# Use the filtered list if the filtered_intersection is not empty
 filtered_intersection = st.session_state.filtered_intersection
 filtered_intersection.sort()
 selected_index = st.selectbox("Slice image pair", range(len(filtered_intersection)),
@@ -629,6 +690,14 @@ if selected_pair:
             )
             st.session_state['attn_opacity'] = alpha
 
+            contour_alpha = st.slider(
+                'Contour alpha',
+                min_value=0.0,
+                max_value=1.0,
+                value=st.session_state.get('contour_alpha', Configuration.DEFAULT_CONTOUR_ALPHA)
+            )
+            st.session_state['contour_alpha'] = contour_alpha
+
         with col2:
             st.write("### Attention Head Selection")
             # Add controls for attention head selection
@@ -649,84 +718,83 @@ if selected_pair:
 
     with st.spinner("Loading..."):
         img_path, attn_path = paired[selected_pair]
+        seg_path = seg_paired.get(selected_pair, None) if len(seg_paired) else None
+        if seg_path is not None:
+            seg_path = seg_path[1]
 
-        # Settings
-        head_settings = {
-            'use_max': use_max,
-            'use_avg': use_avg,
-            'head_idx': head_idx
-        }
-
-        # Create the image
-        overlayed, attn_map_target = create_overlay_image(
-            img_path,
-            attn_path,
+        # Create the image using the new function
+        overlayed, attn_map_target, img_sitk = create_display_image(
+            img_path=img_path,
+            attn_path=attn_path,
+            seg_path=seg_path,
             window_range=(lower, upper),
             attn_threshold=(attn_min, attn_max),
             alpha=alpha,
-            head_settings=head_settings
+            contour_alpha=contour_alpha,
+            head_settings={'use_max': use_max, 'use_avg': use_avg, 'head_idx': head_idx}
         )
 
         # Show the image
         image_slot.image(overlayed, use_container_width=True)
 
-        # Load the result dat and display them
+        # Load the result data and display them
         if selected_pair in filtered_csv_data.index:
             dataframe_slot.dataframe(filtered_csv_data.loc[selected_pair].to_frame().T)
         else:
             st.warning(f"Selected ID {selected_pair} is not found in the filtered dataset.")
             dataframe_slot.dataframe(pd.DataFrame())
 
-    # Add histogram plot of attention map with threshold lines
-    with st.expander("📊 Plots"):
-        attn_values = attn_map_target.flatten()
+    # Add histogram plot of attention map with threshold lines only if attention map is available
+    if attn_map_target is not None:
+        with st.expander("📊 Plots"):
+            attn_values = attn_map_target.flatten()
 
-        # Filter out extreme values for better visualization
-        lower_percentile = Configuration.HIST_LOWER_PERCENTILE
-        upper_percentile = Configuration.HIST_UPPER_PERCENTILE
-        p1 = np.percentile(attn_values, lower_percentile)
-        p2 = np.percentile(attn_values, upper_percentile)
-        filtered_values = attn_values[(attn_values >= p1) & (attn_values <= p2)]
+            # Filter out extreme values for better visualization
+            lower_percentile = Configuration.HIST_LOWER_PERCENTILE
+            upper_percentile = Configuration.HIST_UPPER_PERCENTILE
+            p1 = np.percentile(attn_values, lower_percentile)
+            p2 = np.percentile(attn_values, upper_percentile)
+            filtered_values = attn_values[(attn_values >= p1) & (attn_values <= p2)]
 
-        # Create histogram using plotly
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(
-            x=attn_values.flatten(),
-            xbins=dict(start=max(2, attn_min - 40), end=min(255, attn_max + 40), size=1),
-            histnorm='probability density',
-            name='Distribution'
-        ))
+            # Create histogram using plotly
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(
+                x=attn_values.flatten(),
+                xbins=dict(start=max(2, attn_min - 40), end=min(255, attn_max + 40), size=1),
+                histnorm='probability density',
+                name='Distribution'
+            ))
 
-        # Add vertical lines for threshold values if applicable
-        if attn_min < attn_max:
-            # Convert threshold from 0-255 scale to actual data range
-            actual_min = attn_min
-            actual_max = attn_max
+            # Add vertical lines for threshold values if applicable
+            if attn_min < attn_max:
+                # Convert threshold from 0-255 scale to actual data range
+                actual_min = attn_min
+                actual_max = attn_max
 
-            fig.add_vline(
-                x=actual_min,
-                line_dash="dash",
-                line_color="red",
-                annotation_text=f"Min ({attn_min})",
-                annotation_position="top right"
+                fig.add_vline(
+                    x=actual_min,
+                    line_dash="dash",
+                    line_color="red",
+                    annotation_text=f"Min ({attn_min})",
+                    annotation_position="top right"
+                )
+                fig.add_vline(
+                    x=actual_max,
+                    line_dash="dash",
+                    line_color="green",
+                    annotation_text=f"Max ({attn_max})",
+                    annotation_position="top left"
+                )
+
+            fig.update_layout(
+                title=f'Attention Map Distribution ({int(lower_percentile)}-{int(upper_percentile)}th percentile)',
+                xaxis_title='Attention Value',
+                yaxis_title='Density',
+                xaxis_range=[max(2, attn_min - 40), min(255, attn_max + 40)],
+                showlegend=False
             )
-            fig.add_vline(
-                x=actual_max,
-                line_dash="dash",
-                line_color="green",
-                annotation_text=f"Max ({attn_max})",
-                annotation_position="top left"
-            )
 
-        fig.update_layout(
-            title=f'Attention Map Distribution ({int(lower_percentile)}-{int(upper_percentile)}th percentile)',
-            xaxis_title='Attention Value',
-            yaxis_title='Density',
-            xaxis_range=[max(2, attn_min - 40), min(255, attn_max + 40)],
-            showlegend=False
-        )
-
-        st.plotly_chart(fig)
+            st.plotly_chart(fig)
 
     # Previous button
     col1, col2, col3 = st.columns([1, 1, 3])
@@ -746,16 +814,50 @@ if selected_pair:
             # No need to rerun becasue the frames update automatically
 
     with col3:
-        if st.button('Save Image', use_container_width=True):
-            st.write("Saving...")
-            try:
-                # Get the image and attention map paths
-                img_path, attn_path = paired[selected_pair]
+        with st.expander("💾 Save Images"):
+            output_dir = st.text_input("Output Directory", value="./saved_images")
+            output_dir = Path(output_dir)
 
-                # Save the images to temp directory
-                saved_img_path = save_image(img_path, lower, upper)
-                saved_attn_path = save_image(attn_path, attn_min, attn_max)
+            save_col1, save_col2 = st.columns([1, 1])
+            with save_col1:
+                if st.button('Save Current Image', use_container_width=True):
+                    st.write("Saving...")
+                    try:
+                        output_dir.mkdir(parents=True, exist_ok=True)
 
-                st.success(f"Images saved successfully to:\n{saved_img_path}\n{saved_attn_path}")
-            except Exception as e:
-                st.error(f"Failed to save images: {e}")
+                        # Get the image and attention map paths
+                        img_path, attn_path = paired[selected_pair]
+
+                        # Save the images to temp directory
+                        image_name = Path(img_path).stem
+                        output_path = output_dir / f"{image_name}_processed.png"
+
+                        # Save the image
+                        cv2.imwrite(str(output_path), cv2.cvtColor(overlayed, cv2.COLOR_BGR2RGB))
+
+                        st.success(f"Images saved successfully to:\n{output_path}")
+                    except Exception as e:
+                        st.error(f"Failed to save images: {e}")
+
+            with save_col2:
+                if st.button('Save All Filtered Images', use_container_width=True):
+                    # Create a directory selector
+                    if output_dir:
+                        st.write("Saving all filtered images...")
+                        try:
+                            saved_paths = save_batch_images(
+                                filtered_intersection=filtered_intersection,
+                                paired=paired,
+                                seg_paired=seg_paired,
+                                output_dir=output_dir,
+                                window_range=(lower, upper),
+                                attn_threshold=(attn_min, attn_max),
+                                alpha=alpha,
+                                head_settings={'use_max': use_max, 'use_avg': use_avg, 'head_idx': head_idx}
+                            )
+
+                            st.success(f"Successfully saved {len(saved_paths)} images to {output_dir}")
+                        except Exception as e:
+                            st.error(f"Failed to save batch images: {e}")
+
+
