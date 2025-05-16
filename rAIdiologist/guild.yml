@@ -21,6 +21,30 @@
       requires:
         - default
 
+    pretrain-focused:
+      main: main --pretrain --model rAI-focused
+      description: Pretrain the CNN in focused mode
+      flags:
+        cnn_drop:
+          env-name: cnn_drop
+          default: 0.1
+        rai_loss_pos_weight:
+          env-anme: RAI_LOSS_POS_WEIGHT
+          default: 1.2
+      flags-dest: config:rAIdiologist/config/flags/flags.yaml
+      flags-import: all
+      output-scalars:
+        training/loss: 'EpochLoss: (\value)'
+        accuracy: 'ACC: (\value)'
+        training/validation_loss: 'VAL: (\value)'
+        step: 'Epoch (\step)'
+        training/step_lr: 'LR: (\value)'
+        AUC: 'OverallAUC: (\value)'
+        sensitivity: 'Sensitivity: (\value)'
+        specificity: 'Specificity: (\value)'
+      requires:
+        - default
+
     train:
       main: main
       flags:
@@ -51,6 +75,40 @@
         - default
         - copy-checkpoint-pretrain
         - copy-checkpoint
+
+    train-focused:
+      main: main --model rAI-focused
+      flags:
+        cnn_drop:
+          env-name: cnn_drop
+          default: 0.1
+        rnn_drop:
+          env-name: rnn_drop
+          default: 0.2
+        rai_conf_weight:
+          env-name: RAI_CONF_WEIGHT
+          default: 0.2
+        rai_over_conf_weight:
+          env-name: RAI_OVER_CONF_WEIGHT
+          default: 0.5
+        rai_gamma:
+          env-name: RAI_GAMMA
+          default: 0.8
+        rai_loss_pos_weight:
+          env-anme: RAI_LOSS_POS_WEIGHT
+          default: 1.2
+      flags-dest: config:rAIdiologist/config/flags/flags.yaml
+      flags-import: all
+      output-scalars:
+        training/loss: 'EpochLoss: (\value)'
+        accuracy: 'ACC: (\value)'
+        training/validation_loss: 'VAL: (\value)'
+        step: 'Epoch (\step)'
+        training/step_lr: 'LR: (\value)'
+      requires:
+        - default
+        - copy-checkpoint-pretrain-focused
+        - copy-checkpoint-focused
 
     train-scdense:
       main: main_scdense
@@ -105,7 +163,7 @@
         - link-log
 
     validation-scdense:
-      main: main_scdense --inference
+      main: main --inference --model=scdense --flags-file=flags_scdense.yaml
       flags-import: no
       output-scalars:
         sensitivity: 'Sensitivity: (\value)'
@@ -122,6 +180,25 @@
           target-type: 'copy'
         - copy-checkpoint-scdense
         - link-log-scdense
+
+    validation-focused:
+      main: main --inference --model rAI-focused
+      flags-import: no
+      output-scalars:
+        sensitivity: 'Sensitivity: (\value)'
+        specificity: 'Specificity: (\value)'
+        PPV: 'PPV: (\value)'
+        NPV: 'NPV: (\value)'
+        ACC: 'OverallACC: (\value)'
+        AUC: 'OverallAUC: (\value)'
+      requires:
+        - default-inference
+        - operation: train-focused
+          select:
+            - 'flags.yaml'
+          target-type: 'copy'
+        - copy-checkpoint-focused
+        - link-log-focused
 
     pretrain-validation:
       main: main --inference --pretrain
@@ -144,6 +221,28 @@
             - 'rAIdiologist'
           target-type: 'link'
         - copy-checkpoint-pretrain
+
+    pretrain-validation-focused:
+      main: main --inference --pretrain --model rAI-focused
+      flags-import: no
+      output-scalars:
+        sensitivity: 'Sensitivity: (\value)'
+        specificity: 'Specificity: (\value)'
+        PPV: 'PPV: (\value)'
+        NPV: 'NPV: (\value)'
+        ACC: 'OverallACC: (\value)'
+        AUC: 'OverallAUC: (\value)'
+      requires:
+        - operation: pretrain-focused
+          select:
+            - 'flags.yaml'
+          target-type: 'copy'
+        - default
+        - operation: pretrain-focused
+          select:
+            - 'rAIdiologist'
+          target-type: 'link'
+        - copy-checkpoint-pretrain-focused
 
     pretrain-pipeline:
       flags:
@@ -200,15 +299,31 @@
         target-type: 'copy'
         target-path: 'Backup'
 
+    copy-checkpoint-focused:
+      - operation: train-focused
+        optional: true
+        select:
+        - 'Backup/rAIdiologist-focused.*(?!.*_temp)\.pt'
+        target-type: 'copy'
+        target-path: 'Backup'
+
     copy-checkpoint-scdense:
       - operation: train-scdense
         select:
-          - 'Backup/*.pt'
+          - 'Backup/.*\.pt'
         target-type: 'copy'
         target-path: 'Backup'
 
     copy-checkpoint-pretrain:
       - operation: pretrain
+        optional: true
+        select:
+          - 'Backup/.*_pretrain\.pt'
+        target-type: 'copy'
+        target-path: 'Backup'
+
+    copy-checkpoint-pretrain-focused:
+      - operation: pretrain-focused
         optional: true
         select:
           - 'Backup/.*_pretrain.pt'
@@ -224,6 +339,13 @@
 
     link-log-scdense:
       - operation: train-scdense
+        select:
+        - 'Backup/Log'
+        target-type: 'link'
+        target-path: 'Backup'
+
+    link-log-focused:
+      - operation: train-focused
         select:
         - 'Backup/Log'
         target-type: 'link'
