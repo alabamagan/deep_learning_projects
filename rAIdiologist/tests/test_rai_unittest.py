@@ -7,6 +7,7 @@ from rAIdiologist.config.network.rAIdiologist import *
 from rAIdiologist.config.network.slicewise_ran import *
 from rAIdiologist.config.network.old.old_swran import SlicewiseAttentionRAN_old
 from rAIdiologist.config.network.ViT3d.models import ViTVNetImg2Pred, CONFIGS
+from rAIdiologist.config.network.cnn import *
 from rAIdiologist.config.rAIdiologistCFG import *
 from rAIdiologist.solvers import *
 import unittest
@@ -82,6 +83,7 @@ class TestOldSWRAN(Test3DNetworks):
         super(TestOldSWRAN, self).setUp()
         self.net = SlicewiseAttentionRAN_old(1, 1).cuda()
 
+
 class TestRAIdiologist(Test3DNetworks):
     def setUp(self) -> None:
         super(TestRAIdiologist, self).setUp()
@@ -112,6 +114,7 @@ class TestRAIdiologist(Test3DNetworks):
                 self.fail(f"Original message: {e}")
             self.assertNotEqual(0, len(self.net.get_playback()), "Play back is empty!")
 
+
 class TestRAN25D(Test3DNetworks):
     def setUp(self) -> None:
         super(TestRAN25D, self).setUp()
@@ -123,6 +126,8 @@ class TestSWRAN(Test3DNetworks):
         super(TestSWRAN, self).setUp()
         self.net = SlicewiseAttentionRAN(1, 1).cuda()
 
+
+# ==== TEST RAIs ====
 @unittest.skip("v3 is broken")
 class TestRAIv3(TestRAIdiologist):
     def setUp(self) -> None:
@@ -130,7 +135,7 @@ class TestRAIv3(TestRAIdiologist):
         self.net = create_rAIdiologist_v3().cuda()
         del self.EXPECTED_DIM
 
-@unittest.skip("v5 is broken")
+
 class TestRAIv5(TestRAIdiologist):
     def setUp(self) -> None:
         super(TestRAIdiologist, self).setUp()
@@ -141,10 +146,17 @@ class TestRAIv5(TestRAIdiologist):
             self.EXPECTED_DIM = 3
         super().expect_dim(out, self.EXPECTED_DIM)
 
+
 class TestRAIv5_1(TestRAIv5):
     def setUp(self) -> None:
         super(TestRAIdiologist, self).setUp()
         self.net = create_rAIdiologist_v5_1().cuda()
+
+
+class TestRAIv5_1_focused(TestRAIv5):
+    def setUp(self) -> None:
+        super(TestRAIdiologist, self).setUp()
+        self.net = create_rAIdiologist_v5_1_focused().cuda()
 
 
 class TestViT(Test3DNetworks):
@@ -192,3 +204,42 @@ class TestRAIController(unittest.TestCase):
             self.controller.debug_validation = True
             self.controller.solver_cfg._last_epoch_loss = 1E32
             self.controller.exec()
+
+
+class TestRAIFocusedController(TestRAIController):
+    def setUp(self) -> None:
+        super(TestRAIController, self).setUp()
+        self.controller.debug_mode = True
+        self.controller.solver_cfg.num_of_epochs = 2
+        self.controller.solver_cfg.batch_size = 1
+
+    def __init__(self, *args,**kwargs):
+        super().__init__(*args, **kwargs)
+        cfg = rAIControllerFocusedCFG()
+        cfg.data_loader_val_cfg.augmentation = '../rAIdiologist/config/rAIdiologist_transform_focused_inf.yaml'
+        self.controller = PMIController(cfg)
+        pass
+    
+    
+class TestOtherCNNs(Test3DNetworks):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.nets = [
+            get_ResNet3d_101(), 
+            get_vgg16()
+        ]
+        self._logger = MNTSLogger['TestOtherCNNs']
+        
+    def test_input(self):
+        for n in self.nets:
+            self._logger.info(f"Testing network: {type(n)}")
+            self.net = n.cuda()
+            super().test_input()
+            del self.net
+            
+    def test_input_bsize_1(self):
+        for n in self.nets:
+            self._logger.info(f"Testing network: {type(n)}")
+            self.net = n.cuda()
+            super().test_input_bsize_1()
+            del self.net
