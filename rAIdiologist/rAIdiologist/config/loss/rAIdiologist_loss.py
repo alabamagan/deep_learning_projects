@@ -14,27 +14,25 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 __all__ = ['ConfidenceBCELoss', 'ConfidenceCELoss']
 
 class ConfidenceBCELoss(nn.Module):
-    r"""Binary cross entropy loss with confidence weighting applied.
+    r"""Computes the custom classification loss combining multiple loss components.
 
-    This assumes the prediction input has shape (B x S x C), where S is the slice dimension. For each
-    slice, the loss is evaluated with increasing weights such that initially, the error tolerance is
-    big and the prediction is not expected to be correct. The weights grows in a sigmoid like function
-    when the prediction screens across slices, with tolerance for error reduce slice after slice.
-
-    For each mini-batch element, the loss is given by:
+    This loss function combines a base classification loss with confidence-aware
+    regularization terms. It handles both standard predictions (single column input)
+    and confidence-based predictions (multi-column input). For multi-column inputs,
+    the loss combines:
 
     .. math::
-        \text{L}(X, Y) = \frac{1}{S}\sum_s^N \text{sigmoid}(s;d) \cdot
-        \text{BCE}(x_s, Y)
+        \mathcal{L} = \mathcal{L}_{base} + \alpha \mathcal{L}_{conf} + \beta \mathcal{L}_{overconf} + \gamma \mathcal{L}_{reg}
 
     where:
-        - :math:`X`: The prediction for 3D image with size :math:`\mathbb{R}^{S\times C}`
-        - :math:`x_s`: The prediction for :math:`s`-th slice.
-        - :math:`Y`: The ground-truth for supervised learning
-        - :math:`N`: The number of slices in the prediction
-        - :math:`\epsilon`: The sigmoid hyperparameter
-        - :math:`d`: The delay before the weight starts to rise significantly
-        - :math:`S`: The sum of all weights :math:`\sum_s \text{sigmoid}(s;d)`.
+
+    .. math::
+        \mathcal{L}_{base} &= BCE(predictions, target) \\
+        \mathcal{L}_{conf} &= BCE(sig\_conf, correctness) \\
+        \mathcal{L}_{overconf} &= E[sig\_conf \cdot (1 - correctness)] \\
+        \mathcal{L}_{reg} &= BCE(sig\_conf, 0.5) \\
+        correctness &= sig\_rnn\_pred \cdot target + (1 - sig\_rnn\_pred) \cdot (1 - target)
+
 
     .. note::
         The confidence is now embedded as weights, which guide the loss to be small for initial
@@ -85,6 +83,10 @@ class ConfidenceBCELoss(nn.Module):
 
             # Base loss (i.g., Binary Cross-Entropy with Logits)
             base_loss = self.base_loss(predictions, target)
+
+            # For validation mode, we don't need other terms for determining stopping point
+            if not input.requires_grad:
+                return base_loss.mean()
 
             # Soft correctness: higher when prediction aligns with target
             # For binary classification: target in {0,1}

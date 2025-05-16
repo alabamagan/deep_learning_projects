@@ -12,7 +12,7 @@ Resample:
 #RandomNoise:
 #  std: [5, 15]
 CropOrPad:
-  - [320, 320, 25]
+  - [224, 224, 16]
   - padding_mode: 0
   - mask_name: "probmap"
 

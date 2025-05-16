@@ -509,12 +509,12 @@ class TransformerEncoderLayerWithAttn(nn.TransformerEncoderLayer):
 
         # Interpolate reshaped playback data to match input tensor size
         sa_for_prediction_resized = F.interpolate(
-            sa_for_prediction, size=(in_tensor[-3], in_tensor[-2], 24),
+            sa_for_prediction, size=(in_tensor[-3], in_tensor[-2], grid_size['s']),
             mode='trilinear', align_corners=False
         ).float()
 
         sa_for_confidence_resized = F.interpolate(
-            sa_for_confidence, size=(in_tensor[-3], in_tensor[-2], 24),
+            sa_for_confidence, size=(in_tensor[-3], in_tensor[-2], grid_size['s']),
             mode='trilinear', align_corners=False
         ).float()
 

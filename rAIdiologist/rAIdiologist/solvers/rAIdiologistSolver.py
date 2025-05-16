@@ -5,10 +5,13 @@ import einops
 import numpy as np
 import pandas as pd
 import torch.nn as nn
+import SimpleITK as sitk
 from tqdm.auto import tqdm
 
 from pytorch_med_imaging.inferencers.BinaryClassificationInferencer import BinaryClassificationInferencer
 from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolverCFG
+from pytorch_med_imaging.pmi_data import DataLabel
+from pytorch_med_imaging.pmi_data_loader import *
 from ..config.loss.rAIdiologist_loss import ConfidenceCELoss
 from ..config.network.lstm_rater import *
 from ..config.network.rAIdiologist import *
@@ -55,6 +58,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         super(rAIdiologistSolver, self).__init__(cfg, *args, **kwargs)
 
         self._current_mode = None # initially, the mode is unsetted
+        self.plotter_dict = {}
 
         # Load from stored state
         if Path(self.rAI_pretrained_CNN).is_file():
@@ -300,7 +304,6 @@ class rAIdiologistSolver(BinaryClassificationSolver):
 
 
 
-
 class rAIdiologistInferencer(BinaryClassificationInferencer):
     r"""Inferencer specifically for rAIdiologist net
 
@@ -368,60 +371,158 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
         return out_tensor, gt_tensor
 
     def _write_out(self):
-        r"""This inherit passes the input image's directory to _writter
+        r"""Process subjects one by one and write output immediately
         """
+        # Create output directory
+        output_dir = Path(self.output_dir)
+        if not output_dir.is_dir():
+            output_dir.mkdir(parents=True, exist_ok=True)
+
         uids = []
-        gt_tensor = []
-        out_tensor = []
-        last_batch_dim = 0
+        gt_list = []
+        pred_list = []
+        conf_list = []
+
         with torch.no_grad():
             self.net = self.net.eval()
-            # dataloader = DataLoader(self._inference_subjects, batch_size=self.batch_size, shuffle=False)
-            dataloader = self.data_loader
-            input_directories = []
-            input_tensors = []
-            for index, mb in enumerate(tqdm(dataloader.get_torch_data_loader(self.batch_size, exclude_augment=True),
-                                            desc="Steps")):
-                s = self._unpack_minibatch(mb, self.unpack_key_inference)
-                s = self._match_type_with_network(s)
-                input_directories.extend(mb['input']['path'])
 
-                try:
-                    self._logger.debug(f"Processing: {mb['uid']}")
-                    _msg = f"s size: {s.shape if not isinstance(s, (list, tuple)) else [ss.shape for ss in s]}"
-                    self._logger.debug(_msg)
-                except:
-                    pass
+            # Process subjects one by one
+            subjects = self.data_loader.get_subjects(exclude_transform=True)
+            transform = self.data_loader.transform
 
-                # Squeezing output directly cause problem if the output has only one output channel.
-                try:
-                    if isinstance(s, (list, tuple)):
-                        input_tensors.extend([ss.cpu() for ss in s[0]])  # ! Note that this might cause RAM problem
-                        out = self.net(*s)
-                    else:
-                        input_tensors.extend([ss.cpu() for ss in s])  # ! Note that this might cause RAM problem
-                        out = self.net(s)
-                    out = self._prepare_network_output(out)
-                except Exception as e:
-                    if 'uid' in mb:
-                        self._logger.error(f"Error when dealing with minibatch: {mb['uid']}")
-                    raise e
+            # Check if ground-truth exist
+            if 'gt' in subjects[0]:
+                self._logger.info("Find ground-truth in subjects. Flaggin `gt` as target dataset.")
+                # This notifies the `display_summary` function
+                self._TARGET_DATASET_EXIST_FLAG = True
+                # For rAI study, we assume there's only binary prediction.
+                self._num_of_questions = 1
 
-                while ((out.dim() < last_batch_dim) or (out.dim() < 2)) and last_batch_dim != 0:
-                    out = out.unsqueeze(0)
-                    self._logger.log_print_tqdm('Unsqueezing last batch.' + str(out.shape))
-                self._logger.debug(f"out size: {out.shape}")
-                out_tensor.append(out.data.cpu())
-                uids.extend(mb['uid'])
-                if 'gt' in mb:
-                    gt_tensor.append(mb['gt'])
+            for subject in tqdm(subjects, desc="Processing subjects"):
+                uid = subject.get('uid', None)
+                self._logger.debug(f"Processing: {uid}")
+                uids.append(uid)
 
-                last_batch_dim = out.dim()
-                del out
+                # Apply transforms
+                transformed_subject = transform(subject)
 
-            out_tensor, gt_tensor = self._reshape_tensors(out_tensor, gt_tensor)
-            dl = self._writter(out_tensor, uids, gt_tensor, input_tensors)
-            self._logger.debug('\n' + dl._data.to_string())
+                # Get input tensor
+                input_tensor = self._unpack_minibatch(transformed_subject, self.unpack_key_inference)
+                input_tensor = self._match_type_with_network(input_tensor)
+
+                # Handle list/tuple inputs
+                if isinstance(input_tensor, (list, tuple)):
+                    out = self.net(*input_tensor)
+                else:
+                    # Add batch dimension if needed
+                    if input_tensor.dim() == 3:  # Add batch dimension if it's a single image
+                        input_tensor = input_tensor.unsqueeze(0)
+                    out = self.net(input_tensor)
+
+                # Process network output
+                out = self._prepare_network_output(out)
+
+                # Handle classification vs. standard mode
+                if self.rAI_classification:
+                    # For classification mode
+                    pred = torch.sigmoid(out.cpu())
+                    pred_list.append(pred.item())
+                else:
+                    # Standard mode (B x 2 x C) -> (prediction, confidence)
+                    if out.dim() == 3:
+                        out = einops.rearrange(out, 'b i c -> b c i').squeeze()
+
+                    pred = torch.sigmoid(out[..., 0].view(-1, 1).cpu())
+                    pred_list.append(pred.item())
+
+                    # Save confidence if available
+                    try:
+                        conf_list.append(out[..., 2].item())
+                    except IndexError:
+                        conf_list.append(None)
+
+                # Collect ground truth if available
+                if 'gt' in subject:
+                    gt_list.append(subject['gt'].item())
+                else:
+                    gt_list.append(None)
+
+                # Save playbacks if enabled
+                if self.rAI_inf_save_playbacks and not self.net._mode == 0:
+                    self._save_playback(transformed_subject)
+
+                    # clear the playbacks
+                    self.net.clean_playback()
+                    self.playbacks.clear()
+
+            # Create final dataframe
+            data = {'IDs': uids, 'Prob_Class_0': pred_list}
+
+            # Add ground truth if available
+            if any(gt is not None for gt in gt_list):
+                data['Truth_0'] = gt_list
+
+            # Add confidence if available
+            if any(conf is not None for conf in conf_list):
+                data['Conf_0'] = conf_list
+
+            # Create the data frame
+            df = pd.DataFrame(data)
+            df['Decision_0'] = df['Prob_Class_0'] >= 0.5
+            df.set_index('IDs', inplace=True)
+            df.sort_index(inplace=True)
+
+            # Save to CSV
+            csv_path = output_dir / 'results.csv'
+            self._logger.info(f"Writing results to {csv_path}")
+            df.to_csv(csv_path)
+
+            # Create DataLabel object for summary
+            self._dl = DataLabel(df)
+
+            return self._dl
+
+    def _save_playback(self, subject):
+        """Save playback for a single subject"""
+        if not hasattr(self, 'playbacks') or len(self.playbacks) == 0:
+            self._logger.warning(f"No playback available for {uid}")
+            return
+
+        uid = subject['uid']
+        input_tensor = subject['input'][tio.DATA]
+
+        out_path = Path(self.output_dir).parent / 'SelfAttention'
+        out_path.mkdir(exist_ok=True, parents=True)
+
+        # Get the last playback
+        playback = self.playbacks[-1]
+
+        # Convert self-attention
+        grid_size = {
+            'h': self.net._grid_size[0],
+            'w': self.net._grid_size[0],
+            's': input_tensor.shape[-1] - 1
+        }
+
+        pb_pred, pb_conf = TransformerEncoderLayerWithAttn.sa_from_playback(playback, input_tensor, grid_size)
+
+        # resample the predication self attention to input spacing
+        input_sitk = subject['input'].as_sitk()
+        # Discard the first slice
+        input_sitk = input_sitk[..., 1:]
+        pb_pred_sitk = pb_pred.as_sitk()
+        pb_pred_sitk.CopyInformation(input_sitk)
+
+        # Save files
+        oname_pb_pred = out_path / f"{uid}_pb_pred.nii.gz"
+        oname_in_tensor = out_path / f"{uid}_image.nii.gz"
+        sitk.WriteImage(input_sitk, oname_in_tensor)
+        sitk.WriteImage(pb_pred_sitk, oname_pb_pred)
+
+        self._logger.info(f"Written playback for {uid} to {out_path}")
+
+        # Clean playback for next subject
+        self.net.clean_playback()
 
 
     def _writter(self,
@@ -438,14 +539,13 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
              uids:
              gt:
         """
+        return
         if self.rAI_classification:
             dl = super(BinaryClassificationInferencer, self)._writter(out_tensor,
                                                                       uids,
                                                                       gt,
                                                                       sig_out=True)
             dl._data.sort_index(inplace=True)
-
-            #TODO: Write playback
             return dl
         else:
             # Assume (B x 2 x C), where 2 is prediction and confidence

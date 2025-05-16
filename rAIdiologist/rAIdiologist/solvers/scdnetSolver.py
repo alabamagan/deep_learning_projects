@@ -20,6 +20,7 @@ from pytorch_med_imaging.perf.classification_perf import *
 from pytorch_med_imaging.perf.segmentation_perf import EVAL as seg_eval
 from pytorch_med_imaging.utils.visualization.segmentation_vis import *
 from pytorch_med_imaging.integration import NP_Plotter
+from pytorch_med_imaging.pmi_data import DataLabel
 from ..config.network.rAIdiologist import rAIdiologist
 from ..config.loss.rAIdiologist_loss import ConfidenceCELoss
 import gc
@@ -270,12 +271,22 @@ class SCDenseNetInferencer(BinaryClassificationInferencer):
         is of uniform size. So the "number of patch" is 1 here, and the patch size is (384, 384, 16), which was
         specified in the original paper.
         """
+        from pytorch_med_imaging.perf.segmentation_perf import EVAL
+        # Creates the directory for holding output
+        output_dir = Path(self.output_dir)
+        if not output_dir.is_dir():
+            output_dir.mkdir(parents=True)
+
         uids = []
-        gt_series = pd.Series(name='Truth_Class_0', dtype='int')
-        pred_series = pd.Series(name='Prob_Class_0')
+        seg_perf_df = []
+        gt_series = pd.Series(name='Truth_0', dtype='int') # This convention is needed by display_summary
+        pred_series = pd.Series(name='Prob_Class_0')       # This convention is needed by display_summary
         last_batch_dim = 0
+        self._num_of_questions = 1 # For display_summary
+        self._TARGET_DATASET_EXIST_FLAG = False
         with torch.no_grad():
             self.net = self.net.eval()
+
 
             # Do it subject by subject
             subjects = self.data_loader.get_subjects(exclude_transform=True)
@@ -311,22 +322,38 @@ class SCDenseNetInferencer(BinaryClassificationInferencer):
                 # Save segmentation based on original image
                 sitk_ori_im = sitk.ReadImage(ori_input['input-srcpath'])
                 sitk_seg_output = tio_inv_bin_output_seg.as_sitk()
+                sitk_seg_output = sitk.DICOMOrient(sitk_seg_output, ''.join(ori_input['input'].orientation))
                 sitk_seg_output.CopyInformation(sitk_ori_im)
 
                 # Write this to output
-                output_seg_dir = self.output_dir / f"{uid}.nii.gz"
+                output_seg_dir = output_dir / f"{uid}.nii.gz"
                 self._logger.info(f"Writing segmentation result to: {output_seg_dir}")
                 sitk.WriteImage(sitk_seg_output, output_seg_dir)
 
                 # Add prediction result to table
                 pred_series[uid] = output_pred.cpu().item()
-                if 'gt' in mb:
-                    gt_series[uid] = mb['gt'].cpu().item()
+                if 'gt' in ori_input:
+                    gt_series[uid] = ori_input['gt'].cpu().item()
+
+                if 'gt_seg' in ori_input:
+                    gt_seg = ori_input['gt_seg']
+                    # calculate DSC
+                    seg_score = EVAL(tio_inv_bin_output_seg.tensor.numpy().flatten(), gt_seg.tensor.numpy().flatten())
+                    seg_score = pd.Series(seg_score, name=uid)
+                    seg_perf_df.append(seg_score)
+
         # Save prediction results
-        self._logger.info(f"Writing prediction results to: {self.output_dir / 'Prediction.csv'}")
+        output_csv_dir = output_dir / 'Prediction.csv'
+        self._logger.info(f"Writing prediction results to: {str(output_csv_dir)}")
         out_df = pd.concat([gt_series, pred_series], axis=1)
-        out_df.to_csv(self.output_dir / f"{out_df}.csv")
+        out_df['Decision_0'] = out_df['Prob_Class_0'] >= 0.5
+        out_df.to_csv(output_csv_dir)
+        if len(seg_perf_df):
+            seg_perf_df = pd.concat(seg_perf_df, axis=1).T
+            out_df = out_df.join(seg_perf_df)
+            self._TARGET_DATASET_EXIST_FLAG = True
         self._logger.debug(f"out_df: \n{out_df.to_string()}")
+        self._dl = DataLabel(out_df)
 
 
     def _prepare_network_output(self, out: Tuple) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
@@ -334,4 +361,11 @@ class SCDenseNetInferencer(BinaryClassificationInferencer):
         out_pred, out_seg = out
         return out_pred, out_seg
 
+    def _writter(self):
+        r"""This function is not used in this inferencer, everything is done within write_out"""
+        pass
+
+    def display_summary(self):
+        self.output_dir = str(next(Path(self.output_dir).rglob('*.csv')))
+        super().display_summary()
 

@@ -67,7 +67,7 @@ data_loader_focused = PMITorchioDataLoaderCFG(
     input_data = {
         'input': './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/01.NyulNormalized/',
         'gt': ('./NPC_Segmentation/99.Testing/NPC_Screening/v1/Datasheet_v2.csv', 'is_malignant'),
-        'probmap':  './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2_SCDensnet/T2WFS_TRA',
+        'probmap':  './NPC_Segmentation/0B.Segmentations/T2WFS_TRA/03.AI_Generated_ManualCorrected',
     },
     input_dtypes = {
         'probmap': 'uint8'
@@ -76,12 +76,12 @@ data_loader_focused = PMITorchioDataLoaderCFG(
     augmentation='./rAIdiologist_transform_focused_train.yaml',
     id_globber    = "^[a-zA-Z]{0,3}[0-9]+",
     ignore_missing_ids = True,
-    sampler='weighted',  # Unset sampler to load the whole image
+    sampler='uniform',  # Unset sampler to load the whole image
     sampler_kwargs=dict(
         patch_size=[224, 224, 16]
     ),
     tio_queue_kwargs=dict(  # dict passed to ``tio.Queue``
-        max_length=15,
+        max_length=320,
         samples_per_volume=1,
         num_workers=min(12, os.cpu_count() * 3 // 4),
         shuffle_subjects=True,
@@ -94,16 +94,13 @@ data_loader_focused = PMITorchioDataLoaderCFG(
 data_loader_focused_test = PMITorchioDataLoaderCFG(
     input_data      = data_loader_focused.input_data,
     input_dtypes    = data_loader_focused.input_dtypes,
+    target_dir      = None or data_loader_focused.input_data.get("gt", None),
     master_data_key = data_loader_focused.master_data_key,
     id_globber      = data_loader_focused.id_globber,
     augmentation    = './rAIdiologist_transform_focused_inf.yaml',
     ignore_missing_ids = True,
-    sampler         = 'weighted'                         , # Unset sampler to load the whole image
-    sampler_kwargs=dict(
-        patch_size=[224, 224, 16]
-    ),
     tio_queue_kwargs=dict(  # dict passed to ``tio.Queue``
-        max_length=15,
+        max_length=32,
         samples_per_volume=1,
         num_workers=min(12, os.cpu_count() * 3 // 4),
         shuffle_subjects=True,
@@ -133,10 +130,10 @@ class MySolverCFG(rAIdiologistSolverCFG):
 
     rAI_inf_save_playbacks = True
 
-    loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([1.2]),
+    loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([float(os.environ.get("RAI_LOSS_POS_WEIGHT", 1.2))]),
                                       conf_weight=float(os.environ.get("RAI_CONF_WEIGHT", 0.2)),
                                       over_conf_weight=float(os.environ.get("RAI_OVER_CONF_WEIGHT", 0.5)),
-                                      gamma=float(os.environ.get("RAI_GAMMA", 0.8)))
+                                      gamma=float(os.environ.get("RAI_GAMMA", 0.5)))
 
 # id_list_dir = "./NPC_Segmentation/99.Testing/NPC_BM_LargeStudy/v3-3fold"
 id_list_dir = "./NPC_Segmentation/99.Testing/NPC_Screening/rai_v5.1/"
@@ -184,6 +181,10 @@ class PretrainControllerCFG(MyControllerCFG):
     solver_cfg.rAI_pretrain_mode = True
     solver_cfg.rAI_fixed_mode = 0
 
+    plotter_init_meta = {
+        'description': "rAIdioglogist focused pre-training.",
+    }
+
 
 class rAIControllerFocusedCFG(MyControllerCFG):
     _data_loader_cfg = data_loader_focused
@@ -195,6 +196,10 @@ class rAIControllerFocusedCFG(MyControllerCFG):
     cp_save_dir = './Backup/rAIdiologist-focused_{fold_code}.pt'
     rAI_pretrained_CNN = './Backup/rAIdiologist-focused_{fold_code}_pretrain.pt'
 
+    # This split have items with no segmentation removed
+    id_list     = id_list_dir + "/{fold_code}-focused.ini"
+    id_list_val = id_list_dir + "/Validation-focused.txt"
+
     plotter_init_meta = {
         'description': "rAIdiologists focused training project."
     }
@@ -203,9 +208,9 @@ class rAIControllerFocusedCFG(MyControllerCFG):
 class FocusedPretrainControllerCFG(rAIControllerFocusedCFG):
     # solver_cls     = BinaryClassificationSolver
     # inferencer_cls = BinaryClassificationInferencer
-    cp_load_dir    = MyControllerCFG.cp_load_dir.replace('.pt', '_pretrain.pt')
-    cp_save_dir    = MyControllerCFG.cp_save_dir.replace('.pt', '_pretrain.pt')
-    output_dir     = MyControllerCFG.output_dir + "_pretrain"
+    cp_load_dir    = rAIControllerFocusedCFG.cp_load_dir.replace('.pt', '_pretrain.pt')
+    cp_save_dir    = rAIControllerFocusedCFG.cp_save_dir.replace('.pt', '_pretrain.pt')
+    output_dir     = rAIControllerFocusedCFG.output_dir + "_pretrain"
     # Override some settings
     solver_cfg     = MySolverCFG()
     solver_cfg.rAI_pretrain_mode = True

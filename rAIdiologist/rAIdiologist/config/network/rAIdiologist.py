@@ -443,7 +443,7 @@ class rAIdiologist_Transformer(rAIdiologist):
         else:
             # merge CNN and RNN results
             conf_rnn = self.rnn.get_confidence_from_output(o) # (conf: B x 1)
-            conf_rnn = torch.clip(torch.sigmoid(conf_rnn), 0.2, 0.8)
+            conf_rnn = torch.sigmoid(conf_rnn) * 0.6 + 0.2
             conf_cnn = -conf_rnn + 1
             # Output (B x 2 x 1)
             return torch.stack([
