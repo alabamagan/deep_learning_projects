@@ -21,15 +21,15 @@ class Test_SCNet(unittest.TestCase):
         cls.temp_dummy_checkpoint = tempfile.NamedTemporaryFile(suffix='.pt')
         net = SCDenseNet()
         torch.save(net.state_dict(), cls.temp_dummy_checkpoint)
+        cls._logger = MNTSLogger(".", 'pytest', verbose=True, keep_file=False, log_level='debug')
+        cls._logger.set_log_level('debug')
+        MNTSLogger.set_global_log_level('debug')
 
     @classmethod
     def tearDownClass(cls):
         cls.temp_dummy_checkpoint.close()
 
     def setUp(self):
-        self._logger = MNTSLogger(".", 'pytest', verbose=True, keep_file=False, log_level='debug')
-        self._logger.set_log_level('debug')
-        MNTSLogger.set_global_log_level('debug')
         num_slice = 16
         num_data = 4
         torch.random.manual_seed(30)
@@ -131,7 +131,7 @@ class Test_SCNet(unittest.TestCase):
             solver.batch_size = 2
             solver.max_step = 3
             solver._write_out()
-
+            solver.display_summary()
             self._logger.info(f"{len(list(Path(tempdir).rglob('*')))}")
 
     def test_dataloader_train(self):

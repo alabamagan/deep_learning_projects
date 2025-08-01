@@ -94,6 +94,7 @@ class Test_visualization_rAIdiologist(unittest.TestCase):
                               self.direction)
         marked_stack_2_grid(s, self.temp_out_path / 'test.png')
 
+    @unittest.skip("Cannot be tested with other tests")
     def test_label_images_in_dir(self):
         temp_dir = tempfile.TemporaryDirectory()
         label_images_in_dir(self.img_dir, self.json, temp_dir.name, idGlobber="MRI_[0-9]+")

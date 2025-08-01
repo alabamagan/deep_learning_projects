@@ -6,9 +6,9 @@ from pathlib import Path
 class Test_CreateTransform(unittest.TestCase):
     def setUp(self):
         self.train_transform_file = Path("../rAIdiologist/config/rAIdiologist_transform_train.yaml")
-        self.train_focused_transform_file = Path("../rAIdiologist/config/rAIdiologist_transform_train_focused.yaml")
+        self.train_focused_transform_file = Path("../rAIdiologist/config/rAIdiologist_transform_focused_train.yaml")
         self.inf_transform_file = Path("../rAIdiologist/config/rAIdiologist_transform_inf.yaml")
-        self.inf_focused_transform_file = Path("../rAIdiologist/config/rAIdiologist_transform_inf_focused.yaml")
+        self.inf_focused_transform_file = Path("../rAIdiologist/config/rAIdiologist_transform_focused_inf.yaml")
 
     def test_train_transform(self):
         trans = create_transform_compose(self.inf_transform_file)
