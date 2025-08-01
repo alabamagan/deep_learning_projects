@@ -21,11 +21,13 @@ rai_options = {
         'rai_v5.1-focused': create_rAIdiologist_v5_1_focused(),
         'rai_old'         : create_old_rAI(),
         'rai_old_mean'    : create_old_rAI_rmean(),
-        'mean_swran': SlicewiseAttentionRAN_old(1, 1, reduce_by_mean=True),
-        'maxvit': MaxViT(1, 1, 64, (2, 2, 5, 2), window_size=5),
-        'old_swran': SlicewiseAttentionRAN_old(1, 1),
-        'new_swran': SlicewiseAttentionRAN(1, 1, dropout = 0, reduce_strats='max'),
-        'scdnet': SCDenseNet()
+        'mean_swran'      : SlicewiseAttentionRAN_old(1, 1, reduce_by_mean = True),
+        'maxvit'          : MaxViT(1, 1, 64, (2, 2, 5, 2), window_size = 5),
+        'old_swran'       : SlicewiseAttentionRAN_old(1, 1),
+        'new_swran'       : SlicewiseAttentionRAN(1, 1, dropout=0, reduce_strats = 'max'),
+        'scdnet'          : SCDenseNet(),
+        'resnet3d101'     : get_ResNet3d_101(),     # Run in pretrain mode only
+        'vgg16'           : get_vgg16()             # Run in pretrain mode only
     }
 }
 

@@ -162,6 +162,9 @@ class ResNet3D(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
+        # For compatibility
+        self.register_buffer('_mode', torch.IntTensor([0]))
+
     def _downsample_basic_block(self, x, planes, stride):
         out = F.avg_pool3d(x, kernel_size=1, stride=stride)
         zero_pads = torch.zeros(out.size(0), planes - out.size(1), out.size(2),
@@ -198,6 +201,10 @@ class ResNet3D(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        # Unsqueeze during inference
+        if x.dim() == 4:
+            x = x.unsqueeze(0)
+
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -236,7 +243,9 @@ def get_ResNet3d(model_depth, **kwargs):
 
 def get_ResNet3d_101():
     r"""Expected input size"""
-    return get_ResNet3d(101, n_input_channels=1, n_classes=1, conv1_t_size=1)
+    m = get_ResNet3d(101, n_input_channels=1, n_classes=1, conv1_t_size=1)
+    m.set_mode = lambda x: 0 # Does nothing
+    return m
 
 # -- 3D VGG
 import torch
@@ -264,16 +273,18 @@ class VGG16_3D(nn.Module):
             nn.AdaptiveMaxPool3d((None, None, 1)), # Max pool each slice
             nn.AdaptiveAvgPool3d((1, 1, 1)), # Average all
             nn.Flatten(),
-            nn.Linear(512, 4096),
+            nn.Linear(512, 2048),
             nn.ReLU(True),
-            nn.Dropout(p=0.5),
-            nn.Linear(4096, 4096),
+            nn.Dropout(p=0.2),
+            nn.Linear(2048, 2048),
             nn.ReLU(True),
-            nn.Dropout(p=0.5),
-            nn.Linear(4096, num_classes)
+            nn.Dropout(p=0.2),
+            nn.Linear(2048, num_classes)
         )
 
         self._initialize_weights()
+        # For compatibility
+        self.register_buffer('_mode', torch.IntTensor([0]))
 
     def _make_layers(self, in_channels):
         layers = []
@@ -313,6 +324,9 @@ class VGG16_3D(nn.Module):
         return layers
 
     def forward(self, x):
+        # Unsqueeze if 4D during inference
+        if x.dim() == 4:
+            x = x.unsqueeze(0)
         x = self.features(x)
         x = self.classifier(x)
         return x
@@ -332,4 +346,6 @@ class VGG16_3D(nn.Module):
 
 def get_vgg16():
     r"""Assume input size"""
-    return VGG16_3D(num_classes=1, in_channels=1)
+    m = VGG16_3D(num_classes=1, in_channels=1)
+    m.set_mode = lambda x: 0 # Does nothing
+    return m
