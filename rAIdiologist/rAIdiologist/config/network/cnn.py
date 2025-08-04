@@ -4,8 +4,9 @@ from functools import partial
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import *
 
-__all__ = ['get_ResNet3d_101', 'get_vgg16']
+__all__ = ['get_ResNet3d_101', 'get_vgg16', 'get_vgg']
 
 # -- ResNet3d
 def get_inplanes():
@@ -344,8 +345,134 @@ class VGG16_3D(nn.Module):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
 
+
+class VGG3D(nn.Module):
+    r"""
+    Re-usable 3-D VGG backbone / classifier.
+
+    Args:
+        layers (Tuple[int, ...]): Number of convolutional layers in each block.
+        in_channels (int, optional): Number of input channels. Defaults to 1.
+        num_classes (int, optional): Number of output classes. Defaults to 1.
+        fc_features (Tuple[int, ...], optional): Number of features in the fully connected layers. Defaults to (4096, 4096).
+        dropout (float, optional): Dropout rate. Defaults to 0.5.
+
+    Attributes:
+        features (nn.Sequential): The feature extraction layers.
+        classifier (nn.Sequential): The classification layers.
+        _mode (torch.Tensor): Compatibility buffer.
+
+    .. notes::
+        This class uses (3, 3, 1) as kernel size for inner layers to account for the
+        fact that most inptut are anisotropic. 
+    """ # noqa
+    # ------------- static builder -------------
+    _CFG_MAP = {
+        '11': (1, 1, 2, 2, 2),
+        '13': (2, 2, 2, 2, 2),
+        '16': (2, 2, 3, 3, 3),
+        '19': (2, 2, 4, 4, 4),
+    }
+
+    def __init__(self,
+                 layers: Tuple[int, ...],
+                 in_channels: int = 1,
+                 num_classes: int = 1,
+                 fc_features: Tuple[int, ...] = (4096, 4096),
+                 dropout: float = 0.5):
+        super().__init__()
+
+        # ---- build feature extractor ----
+        features = []
+        channels = [64, 128, 256, 512, 512]
+        in_ch = in_channels
+
+        for out_ch, n_conv in zip(channels, layers):
+            # first conv in block
+            features.extend([
+                nn.Conv3d(in_ch, out_ch, 3, padding=1),
+                nn.BatchNorm3d(out_ch),
+                nn.ReLU(inplace=True)
+            ])
+            # remaining convs
+            for _ in range(n_conv - 1):
+                features.extend([
+                    nn.Conv3d(out_ch, out_ch, kernel_size=(3, 3, 1), padding=1),
+                    nn.BatchNorm3d(out_ch),
+                    nn.ReLU(inplace=True)
+                ])
+            features.append(nn.MaxPool3d(2, 2))
+            in_ch = out_ch
+
+        self.features = nn.Sequential(*features)
+
+        # ---- build classifier ----
+        clf = []
+        in_dim = channels[-1]
+        for h_dim in fc_features:
+            clf += [
+                nn.Linear(in_dim, h_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout)
+            ]
+            in_dim = h_dim
+        clf.append(nn.Linear(in_dim, num_classes))
+        self.classifier = nn.Sequential(
+            nn.AdaptiveMaxPool3d((None, None, 1)),
+            nn.AdaptiveAvgPool3d((1, 1, 1)),
+            nn.Flatten(),
+            *clf
+        )
+
+        # compat buffer
+        self.register_buffer('_mode', torch.IntTensor([0]))
+
+    def forward(self, x):
+        if x.dim() == 4:
+            x = x.unsqueeze(0)
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
+
+
+    @staticmethod
+    def get(size: Union[str, Tuple[int, ...]] = '16',
+            in_channels: int = 1,
+            num_classes: int = 1,
+            fc_features: Tuple[int, ...] = (4096, 4096),
+            dropout: float = 0.5):
+        """
+        Factory method: returns a ready network.
+
+        Args:
+            size (Union[str, Tuple[int, ...]], optional): The size of the VGG network. Can be one of '11', '13', '16', '19' or a tuple of int. Defaults to '16'.
+            in_channels (int, optional): Number of input channels. Defaults to 1.
+            num_classes (int, optional): Number of output classes. Defaults to 1.
+            fc_features (Tuple[int, ...], optional): Number of features in the fully connected layers. Defaults to (4096, 4096).
+            dropout (float, optional): Dropout rate. Defaults to 0.5.
+
+        Returns:
+            VGG3D: The constructed VGG3D model.
+        """
+        if isinstance(size, str):
+            if size not in VGG3D._CFG_MAP:
+                raise ValueError(
+                    f"size must be one of {list(VGG3D._CFG_MAP)} or a tuple of int")
+            layers = VGG3D._CFG_MAP[size]
+        else:
+            layers = tuple(size)
+
+        return VGG3D(layers, in_channels, num_classes, fc_features, dropout)
+
+
 def get_vgg16():
     r"""Assume input size"""
     m = VGG16_3D(num_classes=1, in_channels=1)
     m.set_mode = lambda x: 0 # Does nothing
+    return m
+
+def get_vgg(size: str):
+    r"""Assume input size is 320 x 320 x S"""
+    m = VGG3D.get(size, fc_features=(2048, 2048))
+    m.set_mode = lambda x: 0  # Does nothing just to entertain rai solver
     return m
