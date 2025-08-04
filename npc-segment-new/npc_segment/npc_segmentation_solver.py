@@ -1,0 +1,1 @@
+from pytorch_med_imaging.solvers import SegmentationSolver
