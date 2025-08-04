@@ -1,0 +1,11 @@
+ToCanonical:
+  {}
+Resample:
+  - 'input'
+CropOrPad: # Crop to the primary tumor
+  - padding_mode: 0
+  - mask_name: "probmap" # this represents segmentation for focused evaluation
+CropOrPad-2:
+  - [256, 256, 30]
+  - padding_mode: 0
+
