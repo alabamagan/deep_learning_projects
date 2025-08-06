@@ -3,3 +3,7 @@ from .rAIdiologist import *
 from .maxvit import *
 from .scnet import *
 from .cnn import *
+from .densenet3d import *
+from .efficientnet3d import *
+from .resnext3d import *
+from .mobilenet3d import *
