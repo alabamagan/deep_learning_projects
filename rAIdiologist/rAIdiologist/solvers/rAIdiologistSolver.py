@@ -61,7 +61,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         self.plotter_dict = {}
 
         # Load from stored state
-        if Path(self.rAI_pretrained_CNN).is_file():`
+        if Path(self.rAI_pretrained_CNN).is_file():
             self._logger.info(f"Loading pretrained CNN network from: {self.rAI_pretrained_CNN}")
             result = self.net.load_pretrained_CNN(self.rAI_pretrained_CNN)
             if str(result) != "<All keys matched successfully>":
