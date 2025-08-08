@@ -7,14 +7,14 @@ from typing import Tuple, Optional, List
 class _DenseLayer(nn.Module):
     def __init__(self, num_input_features: int, growth_rate: int, bn_size: int, drop_rate: float):
         super(_DenseLayer, self).__init__()
-        self.add_module('norm1', nn.BatchNorm3d(num_input_features))
-        self.add_module('relu1', nn.ReLU(inplace=True))
-        self.add_module('conv1', nn.Conv3d(num_input_features, bn_size * growth_rate,
-                                           kernel_size=1, stride=1, bias=False))
-        self.add_module('norm2', nn.BatchNorm3d(bn_size * growth_rate))
-        self.add_module('relu2', nn.ReLU(inplace=True))
-        self.add_module('conv2', nn.Conv3d(bn_size * growth_rate, growth_rate,
-                                           kernel_size=3, stride=1, padding=1, bias=False))
+        self.norm1 = nn.BatchNorm3d(num_input_features)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv3d(num_input_features, bn_size * growth_rate,
+                               kernel_size=1, stride=1, bias=False)
+        self.norm2 = nn.BatchNorm3d(bn_size * growth_rate)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv3d(bn_size * growth_rate, growth_rate,
+                               kernel_size=3, stride=1, padding=1, bias=False)
         self.drop_rate = float(drop_rate)
 
     def forward(self, x):
@@ -37,17 +37,23 @@ class _DenseBlock(nn.Module):
             self.add_module('denselayer%d' % (i + 1), layer)
 
     def forward(self, x):
-        return self(x)
+        # Concatenate all feature maps from the dense layers
+        # Instead of self(x), iterate through the layers
+        concatenated_features = []
+        for i, layer in enumerate(self.children()):
+            x = layer(x)
+            concatenated_features.append(x)
+        return torch.cat(concatenated_features, 1)
 
 
 class _Transition(nn.Module):
     def __init__(self, num_input_features: int, num_output_features: int):
-        super(_Transition, self).__init__()
-        self.add_module('norm', nn.BatchNorm3d(num_input_features))
-        self.add_module('relu', nn.ReLU(inplace=True))
-        self.add_module('conv', nn.Conv3d(num_input_features, num_output_features,
-                                          kernel_size=1, stride=1, bias=False))
-        self.add_module('pool', nn.AvgPool3d(kernel_size=2, stride=2))
+        super().__init__()
+        self.norm = nn.BatchNorm3d(num_input_features)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv = nn.Conv3d(num_input_features, num_output_features,
+                                kernel_size=1, stride=1, bias=False)
+        self.pool = nn.AvgPool3d(kernel_size=2, stride=2)
 
     def forward(self, x):
         out = self.conv(self.relu(self.norm(x)))
