@@ -167,6 +167,6 @@ def get_densenet3d(model_depth: str = '121', **kwargs):
 
 def get_densenet3d_121():
     """Returns a DenseNet3D-121 model with default parameters for medical imaging."""
-    m = get_densenet3d('121', n_input_channels=1, n_classes=1)
+    m = get_densenet3d('121')
     m.set_mode = lambda x: 0  # Does nothing
     return m

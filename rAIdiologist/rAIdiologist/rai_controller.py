@@ -38,6 +38,8 @@ class rAIController(PMIController):
         r"""Because the network might be redefined by guild after :func:`override_cfg` is called, the mode is explicitly
         set here again since mode 0 using `BinaryClassificationSolver` doesn't have the callback to set it during run.
         """
-        if not self.net_name in ('old_swran', 'new_swran', 'mean_swran', 'maxvit'):
+        try:
             self.solver_cfg.net.set_mode(self.solver_cfg.rAI_fixed_mode)
+        except AttributeError:
+            self._logger.warning('Network mode not set.')
         super(rAIController, self).exec()

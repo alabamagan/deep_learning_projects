@@ -61,7 +61,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         self.plotter_dict = {}
 
         # Load from stored state
-        if Path(self.rAI_pretrained_CNN).is_file():
+        if Path(self.rAI_pretrained_CNN).is_file():`
             self._logger.info(f"Loading pretrained CNN network from: {self.rAI_pretrained_CNN}")
             result = self.net.load_pretrained_CNN(self.rAI_pretrained_CNN)
             if str(result) != "<All keys matched successfully>":
@@ -194,11 +194,10 @@ class rAIdiologistSolver(BinaryClassificationSolver):
     def _set_net_mode(self, mode):
         try:
             # When there's data parallel
-            self.net.get_submodule('module').set_mode(mode)
-            self.net.get_submodule('module').RECORD_ON = False
+            self.net.get_net().set_mode(mode)
+            self.net.get_net().RECORD_ON = False
         except:
-            self.net.set_mode(mode)
-            self.net.RECORD_ON = False
+            self._logger.warning("Cannot set mode for the network.")
         self._current_mode = mode
 
     def validation(self) -> list:
