@@ -322,7 +322,11 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
         self.playbacks = []
         self._logger.debug(f"Mode: {self.rAI_fixed_mode}")
         if self.rAI_fixed_mode == 0:
-            self.net.set_mode(self.rAI_fixed_mode)
+            try:
+                self.net.set_mode(self.rAI_fixed_mode)
+            except:
+                self._logger.warning("Solver cannot set mode")
+                pass
             self._logger.info("Running inference for mode 0")
 
         self.net_handles = []
