@@ -28,7 +28,7 @@ rai_options = {
         'scdnet'          : SCDenseNet(),
         'resnet3d101'     : get_ResNet3d_101(),     # Run in pretrain mode only
         'vgg16'           : get_vgg16(),            # Run in pretrain mode only
-        'vgg11'           : get_vgg('11')
+        'vgg11'           : get_vgg('11'),
         'densenet3d121'   : get_densenet3d('121'),   # DenseNet3D-121
         'densenet3d169'   : get_densenet3d('169'),  # DenseNet3D-169
         'densenet3d201'   : get_densenet3d('201'),  # DenseNet3D-201
