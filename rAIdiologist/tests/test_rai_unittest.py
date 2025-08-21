@@ -186,6 +186,7 @@ class TestRAIController(unittest.TestCase):
         super().__init__(*args, **kwargs)
         cfg = MyControllerCFG()
         cfg.data_loader_val_cfg.augmentation = '../rAIdiologist/config/rAIdiologist_transform_inf.yaml'
+        cfg.plotting = False # Turn off plotting for controller test
         self.controller = PMIController(cfg)
         pass
 
@@ -217,6 +218,7 @@ class TestRAIFocusedController(TestRAIController):
         super().__init__(*args, **kwargs)
         cfg = rAIControllerFocusedCFG()
         cfg.data_loader_val_cfg.augmentation = '../rAIdiologist/config/rAIdiologist_transform_focused_inf.yaml'
+        cfg.plotting = False
         self.controller = PMIController(cfg)
         pass
     

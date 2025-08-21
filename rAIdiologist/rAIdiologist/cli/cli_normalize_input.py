@@ -9,11 +9,12 @@ from mnts.filters.mpi_wrapper import mpi_wrapper, repeat_zip
 from mnts.utils import get_unique_IDs
 from pathlib import Path
 from typing import Optional
+import warnings
 import pprint
 
 DEFAULT_PARAMS = {
-    'mnts_state': Path(__file__).joinpath('../../assets/T2w-fs'),
-    'mnts_graph': Path(__file__).joinpath('../../assets/t2w_normalization.yaml')
+    'mnts_state': Path(__file__).parent.joinpath('../../assets/T2w-fs'),
+    'mnts_graph': Path(__file__).parent.joinpath('../../assets/t2w_normalization.yaml')
 }
 
 
@@ -115,6 +116,9 @@ def normalize_input(input_dir  : Path,
         logger.info("{:=^150}".format(" Initiating Normalization "))
 
         # creates the graph
+        if not mnts_graph.is_file():
+            logger.error(f"Cannot open transform file: {mnts_graph}")
+            raise FileNotFoundError("You must provide a valid transform file.")
         G = mnts.filters.MNTSFilterGraph.CreateGraphFromYAML(mnts_graph)
         logger.info(f"Created graph: {G}")
 
@@ -159,7 +163,7 @@ def normalize_input(input_dir  : Path,
             if not output_uids == input_uids:
                 # missing
                 missing = input_uids - output_uids
-
+                warnings.warn(f"Some IDs cannot be properly processed: {', '.join(missing)}")
                 logger.warning(f"Some IDs cannot be properly processed: {', '.join(missing)}")
 
 

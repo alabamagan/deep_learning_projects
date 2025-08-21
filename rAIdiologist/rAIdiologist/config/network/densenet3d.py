@@ -14,7 +14,7 @@ class _DenseLayer(nn.Module):
         self.norm2 = nn.BatchNorm3d(bn_size * growth_rate)
         self.relu2 = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv3d(bn_size * growth_rate, growth_rate,
-                               kernel_size=3, stride=1, padding=1, bias=False)
+                               kernel_size=[3,3,1], stride=1, padding=[1,1,0], bias=False)
         self.drop_rate = float(drop_rate)
 
     def forward(self, x):
@@ -37,13 +37,11 @@ class _DenseBlock(nn.Module):
             self.add_module('denselayer%d' % (i + 1), layer)
 
     def forward(self, x):
-        # Concatenate all feature maps from the dense layers
-        # Instead of self(x), iterate through the layers
-        concatenated_features = []
-        for i, layer in enumerate(self.children()):
+        # Each _DenseLayer already concatenates its input with newly produced features.
+        # We only need to pass the tensor sequentially through layers and return the final tensor.
+        for layer in self.children():
             x = layer(x)
-            concatenated_features.append(x)
-        return torch.cat(concatenated_features, 1)
+        return x
 
 
 class _Transition(nn.Module):
@@ -53,7 +51,7 @@ class _Transition(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.conv = nn.Conv3d(num_input_features, num_output_features,
                                 kernel_size=1, stride=1, bias=False)
-        self.pool = nn.AvgPool3d(kernel_size=2, stride=2)
+        self.pool = nn.AvgPool3d(kernel_size=[2,2,1], stride=[2,2,1])
 
     def forward(self, x):
         out = self.conv(self.relu(self.norm(x)))
@@ -88,10 +86,10 @@ class DenseNet3D(nn.Module):
         
         # First convolution
         self.features = nn.Sequential(
-            nn.Conv3d(in_channels, num_init_features, kernel_size=7, stride=2, padding=3, bias=False),
+            nn.Conv3d(in_channels, num_init_features, kernel_size=[7,7,3], stride=2, padding=3, bias=False),
             nn.BatchNorm3d(num_init_features),
             nn.ReLU(inplace=True),
-            nn.MaxPool3d(kernel_size=3, stride=2, padding=1)
+            nn.MaxPool3d(kernel_size=[3,3,1], stride=[2,2,1], padding=[1,1,0])
         )
         
         # Each denseblock

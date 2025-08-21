@@ -144,7 +144,13 @@ class Transitionblock_up(nn.Module):
             x = F.upsample(x, scale_factor=2, mode='trilinear', align_corners=True)
         else:
             x = F.upsample(x, scale_factor=[2, 2, 1], mode='trilinear', align_corners=True)
+            # Specifical situation where the final dimension is a single dimension
         # print(f'Upsampled {x.shape = }')
+        # Check if the final dimension matches as single dimension can occur
+        dim_diff = [s1 - s2 for s1, s2 in zip(x_shortcut.shape[-3:], x.shape[-3:])]
+        if any(dim_diff):
+            x = F.pad(x, [0, dim_diff[-1], 0, dim_diff[-2], 0, dim_diff[-3]])
+
         x = torch.concat([x_shortcut, x], dim=1) # concat at channel dimension
         x = self.conv(x)
         return x

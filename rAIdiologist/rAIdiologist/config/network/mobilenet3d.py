@@ -28,12 +28,15 @@ class ConvBNReLU(nn.Sequential):
         self,
         in_planes: int,
         out_planes: int,
-        kernel_size: int = 3,
+        kernel_size: int = [3,3,1],
         stride: int = 1,
         groups: int = 1,
         norm_layer: Optional[nn.Module] = None
     ):
-        padding = (kernel_size - 1) // 2
+        if isinstance(kernel_size, (tuple, list)):
+            padding = [(k -1) // 2 for k in kernel_size]
+        else:
+            padding = (kernel_size-1) // 2
         if norm_layer is None:
             norm_layer = nn.BatchNorm3d
         super(ConvBNReLU, self).__init__(
@@ -157,8 +160,9 @@ class MobileNetV2_3D(nn.Module):
         # Building first layer
         input_channel = _make_divisible(input_channel * width_mult, round_nearest)
         self.last_channel = _make_divisible(last_channel * max(1.0, width_mult), round_nearest)
-        features: List[nn.Module] = [ConvBNReLU(in_channels, input_channel, stride=2, norm_layer=norm_layer)]
-        
+        self.stem = ConvBNReLU(in_channels, input_channel, stride=2, norm_layer=norm_layer)
+        features: List[nn.Module] = []
+
         # Building inverted residual blocks
         for t, c, n, s in inverted_residual_setting:
             output_channel = _make_divisible(c * width_mult, round_nearest)
@@ -175,17 +179,12 @@ class MobileNetV2_3D(nn.Module):
                 )
                 input_channel = output_channel
         
-        # Building last several layers
-        features.append(
-            ConvBNReLU(input_channel, self.last_channel, kernel_size=1, norm_layer=norm_layer)
-        )
-        
-        # Combine feature layers
+        # last 1x1
+        features.append(ConvBNReLU(input_channel, self.last_channel, kernel_size=1, norm_layer=norm_layer))
         self.features = nn.Sequential(*features)
-        
-        # Building classifier
+
+        # Classifier: use stable 3D pooling (global average over all spatial dims)
         self.classifier = nn.Sequential(
-            nn.AdaptiveMaxPool3d((None, None, 1)),
             nn.AdaptiveAvgPool3d((1, 1, 1)),
             nn.Flatten(),
             nn.Dropout(0.2),
@@ -204,22 +203,22 @@ class MobileNetV2_3D(nn.Module):
             elif isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.zeros_(m.bias)
-        
+
         # For compatibility
         self.register_buffer('_mode', torch.IntTensor([0]))
-    
+
     def _forward_impl(self, x: torch.Tensor) -> torch.Tensor:
         # This exists since TorchScript doesn't support hybrid scripting
         # so we need to separate the forward method
+        x = self.stem(x)
         x = self.features(x)
         x = self.classifier(x)
         return x
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Unsqueeze during inference
+        # For inference convenience only; does not change channels
         if x.dim() == 4:
             x = x.unsqueeze(0)
-            
         return self._forward_impl(x)
 
 

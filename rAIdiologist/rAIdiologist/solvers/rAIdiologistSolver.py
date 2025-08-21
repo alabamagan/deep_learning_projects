@@ -482,7 +482,6 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
 
             # Create DataLabel object for summary
             self._dl = DataLabel(df)
-
             return self._dl
 
     def _save_playback(self, subject):

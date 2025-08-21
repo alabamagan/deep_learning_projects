@@ -1,1 +1,1 @@
-import cli_normalize_input
+from . import cli_normalize_input
