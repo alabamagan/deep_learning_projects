@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Optional
 import pprint
 
+DEFAULT_PARAMS = {
+    'mnts_state': Path(__file__).joinpath('../../assets/T2w-fs'),
+    'mnts_graph': Path(__file__).joinpath('../../assets/t2w_normalization.yaml')
+}
+
 
 @click.command(help='CLI for normalizing MRI images using the MNTS package.')
 @click.option('--input-dir', '-i', type=click.Path(exists=True, dir_okay=True, path_type=Path), required=True,
@@ -20,9 +25,11 @@ import pprint
               help='Directory where output data will be saved.')
 @click.option('--mnts-state', '-s',
               type=click.Path(dir_okay=True, file_okay=True, readable=True, path_type=Path),
+              default=DEFAULT_PARAMS['mnts_state'],
               help='Path to the MNTS state file required for normalization steps that utilize training.')
 @click.option('--mnts-graph', '-g',
               type=click.Path(file_okay=True, dir_okay=False, readable=True, path_type=Path), required=True,
+              default=DEFAULT_PARAMS['mnts_graph'],
               help='Path to the MNTS graph file needed for normalization steps that involve training.')
 @click.option('--num-workers', '-n', default=1, type=int, help='Number of workers to use.')
 @click.option('--keep-log', is_flag=True, default=None,
