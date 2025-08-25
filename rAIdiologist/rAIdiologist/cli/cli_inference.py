@@ -8,15 +8,9 @@ Description:
 
 import sys
 
-from pytorch_med_imaging.controller import PMIController
-from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolverCFG
-from pytorch_med_imaging.inferencers import BinaryClassificationInferencer, ClassificationInferencer
-from pytorch_med_imaging.pmi_data_loader import (PMIImageDataLoaderCFG, PMIImageDataLoader,
-                                                 PMITorchioDataLoader, PMITorchioDataLoaderCFG)
-from ..config import rAIdiologistCFG, SCDControllerCFG
-from ..config.network import *
-from ..config.loss import *
-from ..rai_main import *
+from rAIdiologist.rai_main import rai_options
+
+from ..config import rAIdiologistCFG
 from ..rai_controller import rAIController
 
 import yaml
