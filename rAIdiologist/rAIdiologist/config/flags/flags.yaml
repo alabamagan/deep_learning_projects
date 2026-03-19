@@ -32,7 +32,7 @@ data_loader_cfg:
 
 
 # Some additional settings to try
-#  lr_sche: 'CosineAnnealingWarmRestarts'
+#  lr_sche: 'CosineAnnealingWarmRestarts'+
 #  lr_sche_args: '[]'
 #  lr_sche_kwargs: "{'T_0': 50, 'T_mult': 2, 'eta_min': 0}"
 #  optimizer: 'Adam'

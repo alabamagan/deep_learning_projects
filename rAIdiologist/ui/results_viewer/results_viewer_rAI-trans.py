@@ -167,9 +167,17 @@ with st.expander("📃 Technical Details"):
         | | Original Image | Shows unprocessed image |
         | | Attention Map | Shows attention distribution |
         | | Overlaid Result | Shows combined view |
-                This tool is particularly useful for in-depth analysis of model attention mechanisms, understanding which image 
-                regions the model focuses on when making diagnostic decisions, and evaluating model performance and explainability.
-                """
+        
+        ## 📊 Prediction results format guide
+        
+        The prediction results should be a .csv or .xlsx file with the following columns:
+        1. Index: this needs to be the left-most column
+        2. Decision_0: this is the AI-prediction reduced to binary prediction
+        3. Prob_0: this is the original probability
+        4. Truth_0 (Optional): this is the reference standard used for evaluation
+        
+        """
+
     )
 
 # -- inistilize states
@@ -188,7 +196,7 @@ def setup_logger(logger):
         rich_handler = RichHandler(console=False, rich_tracebacks=True, tracebacks_show_locals=True,
                                    locals_max_length=20)
         logger.addHandler(rich_handler)
-        logger.setLevel(logging.INFO)  # Set the logging level if needed
+        logger.setLevel(logging.DEBUG)  # Set the logging level if needed
 
         # Log a test message
         logger.info("Logger setup complete with RichHandler.")
@@ -387,6 +395,9 @@ def create_display_image(img_path, attn_path=None, seg_path=None,
         seg_img = binary_closing_opening_slice_by_slice(seg_img, 2, 2)
         seg_img = sitk.GetArrayFromImage(seg_img)
 
+        # sanity check
+        if seg_img.sum() <= 0:
+            logger.warning(f"Nothing in segmentation after resampling {seg_path}!")
 
         seg_img = make_grid(seg_img, ncols=ncols)
         seg_contours = draw_contour(seg_img, alpha=1, width=contour_width)
@@ -494,7 +505,7 @@ def build_configurations():
                     ))
 
         #  Add some buttons
-        col1, _, _ = st.columns([1, 1, 3])
+        col1, col2, _ = st.columns([1, 1, 3])
         with col1:
             if st.button("Save States", use_container_width=True):
                 # Dynamically get all attributes of the Configuration class and read corresponding values from session_state
@@ -509,6 +520,8 @@ def build_configurations():
                             setattr(conf_instance, field_name, value)
                 conf_instance.save_to_json(Configuration.state_file)
                 st.rerun()
+        with col2:
+            st.checkbox("Plot with segmentation", key="USE_SEGMENT")
 
 
 if 'initialized' not in st.session_state:
@@ -534,15 +547,17 @@ id_globber = st.session_state.id_globber
 if image_dir.is_dir():
     # Load image files
     all_files = list(image_dir.rglob("*nii.gz"))
+    logger.info(f"Found {len(all_files)} nifti files in image_dir")
     image_files = {re.search(id_globber, f.name).group(): f
-                   for f in all_files if 'image' in f.name.lower()}
+                   for f in all_files if 'image' in f.stem.lower()}
+    logger.info(f"Found {len(image_files)} unique keys: {'.'.join(image_files.keys())}")
 
     # Load attention maps if directory is configured
     attn_files = {}
     if st.session_state.attn_dir and Path(st.session_state.attn_dir).is_dir():
         attn_files = {re.search(id_globber, f.name).group(): f
                       for f in Path(st.session_state.attn_dir).rglob("*nii.gz")
-                      if 'pb_pred' in f.name.lower()}
+                      if re.search(r'(?i)(heatmap|pb_map|pb_pred)', f.name.lower())}
         st.success(f"Successfully loaded {len(attn_files)} attention maps")
 
         # Check for images without attention maps
@@ -577,7 +592,7 @@ else:
 # Load segmentation pairs if segmentation directory is configured
 seg_dir = st.session_state.segmentation_dir
 seg_paired = {}
-if seg_dir and Path(seg_dir).is_dir():
+if seg_dir != "" and Path(seg_dir).is_dir() and st.session_state.USE_SEGMENT:
     try:
         seg_files = {re.search(id_globber, f.name).group(): f
                      for f in Path(seg_dir).rglob("*nii.gz")}
@@ -594,11 +609,34 @@ if seg_dir and Path(seg_dir).is_dir():
     except Exception as e:
         if len(seg_files) > 0:
             st.warning(f"Failed to load segmentation masks: {e}")
+else:
+    st.info("Segmentation is not loaded because its not specified")
 
 # Load the csv file
 csv_dir = st.session_state.csv_dir
 if csv_dir.is_file():
     csv_data = pd.read_csv(csv_dir, index_col=0)
+
+    # If the csv is from simple inference, it will have a different format, handling it here
+    # note that we require "Truth_0" column to be present. Otherwise, it's not meaningful to
+    # perform these transforms.
+    logger.debug(f"{csv_data.columns}")
+    if all(col in csv_data.columns for col in ['OverallPrediction', 'Truth_0']):
+        logger.info(f"Detected results from simple_inference, transforming columns.")
+
+
+        def _sigmoid(val):
+            return 1 / (1 + np.exp(-val))
+
+
+        logger.info("Adding Prob_0")
+        csv_data['Prob_0'] = csv_data['OverallPrediction'].astype(float).apply(_sigmoid)
+
+        logger.info("Adding Decision_0")
+        csv_data['Decision_0'] = csv_data['Prob_0'] > 0.5
+
+    st.dataframe(csv_data, key="display_data")
+
 else:
     st.error(f"File `{str(csv_dir)}` does not exist!")
     st.stop()
@@ -819,6 +857,7 @@ if selected_pair:
 
         # Load the result data and display them
         if selected_pair in filtered_csv_data.index:
+            logger.debug(f"Selected pair: {selected_pair}")
             dataframe_slot.dataframe(filtered_csv_data.loc[selected_pair].to_frame().T)
         else:
             st.warning(f"Selected ID {selected_pair} is not found in the filtered dataset.")

@@ -52,7 +52,7 @@ data_loader_test = PMIImageFeaturePairLoaderCFG(
     target_column = data_loader.target_column,
     id_globber    = data_loader.id_globber,
     augmentation  = './rAIdiologist_transform_inf.yaml',
-    tio_queue_kwargs = dict(            # dict passed to ``tio.Queue``
+    tio_queue_kwargs = dict(            # `dict passed to ``tio.Queue``
         max_length             = 15,
         samples_per_volume     = 1,
         num_workers            = min(12, os.cpu_count() * 3 // 4),
@@ -128,6 +128,7 @@ class MySolverCFG(rAIdiologistSolverCFG):
     early_stop_kwargs = {'warmup'       : 5, 'patience': 10}
     accumulate_grad   = 0
 
+    # This make the inference saves the transformer playbacks when model is rAI
     rAI_inf_save_playbacks = True
 
     loss_function = ConfidenceBCELoss(pos_weight = torch.as_tensor([float(os.environ.get("RAI_LOSS_POS_WEIGHT", 1.2))]),

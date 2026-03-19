@@ -48,10 +48,10 @@ class Args:
               multiple=True,
               default=None,
               help='List of IDs.')
-@click.option('--id-list-dir',
+@click.option('--id-list-file',
               required=False,
               default=None,
-              type=click.Path(file_okay=True, dir_okay=True, path_type=Path),
+              type=click.Path(file_okay=False, writable=True, dir_okay=True, path_type=Path),
               help='ID List file, if this is specified, id-list will be ignored.')
 @click.option('--inference-transform',
               type=click.Path(file_okay=True, exists=True, path_type=Path),
@@ -113,17 +113,20 @@ def main(**kwargs):
         m.load_state_dict(torch.load(args.checkpoint_dir))
         m = m.cuda()
         m.eval()
+        logger.debug(f"Created network: {m}")
 
         # Prepare excel output file
         out_df_fname = args.output_dir / 'predictions.csv'
+        logger.debug(f"Output target: {out_df_fname}")
 
         # Enable recording of model operations
         m.RECORD_ON = True
         grid_size = {
-            'w': 8,
-            'h': 8,
-            's': 24
+            'w': m._grid_size[0],
+            'h': m._grid_size[1],
+            's': 24 # this is currently hardcoded
         }
+        logger.debug(f"Grid size: {grid_size}")
 
         CONTINUE_FLAG = False
         if out_df_fname.exists():
@@ -157,7 +160,7 @@ def main(**kwargs):
                 # Save the images to the output directory
                 img = tio.ScalarImage(
                     tensor=in_tensor.cpu()[..., 1:])  # Remove the first slice matching network's `forward`
-                img.save(args.output_dir / f"{sid}_image.nii.gz")
+                img.save(args.output_dir / f"{sid}.nii.gz")
                 play_back_prediction.save(args.output_dir / f"{sid}_heatmap.nii.gz")
                 play_back_confidence.save(args.output_dir / f"{sid}_confidence.nii.gz")
                 logger.info(f"{sub['sid']} done.")
