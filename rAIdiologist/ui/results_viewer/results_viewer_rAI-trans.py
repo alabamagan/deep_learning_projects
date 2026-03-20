@@ -29,6 +29,7 @@ import pydantic
 import rich
 from rich.logging import RichHandler
 from rich.traceback import install
+from rAI_utils import *
 
 install()
 
@@ -233,19 +234,16 @@ def _exception_hook(exctype, value, traceback):
 
 
 sys.excepthook = _exception_hook
-
-
 # -- Setup style
 # Load the CSS file
 def load_css(file_name):
     with open(file_name) as f:
         st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-
-
 load_css("./style.css")
 
-
 # -- Define some useful functions
+PROB_CLASS_NAME = 'Prob_0'
+
 @st.cache_data
 def load_image_attention_pairs(img_dir: Path, id_globber: str = r"\w+\d+"):
     """Load and pair image files with their corresponding attention maps
@@ -342,7 +340,7 @@ def binary_closing_opening_slice_by_slice(image, closing_radius, opening_radius,
 def create_display_image(img_path, attn_path=None, seg_path=None,
                          window_range=(25, 99), attn_threshold=(15, 55),
                          alpha=0.5, head_settings=None, ncols=5, contour_alpha=0.8,
-                         contour_width=1):
+                         contour_width=1, case_id=None, prob=None):
     """Create display image with optional attention map and segmentation overlay.
 
     Args:
@@ -393,22 +391,61 @@ def create_display_image(img_path, attn_path=None, seg_path=None,
         # seg_img = sitk.BinaryMorphologicalOpening(seg_img, [2, 2, 2])
         # seg_img = sitk.BinaryMorphologicalClosing(seg_img, [2, 2, 2])
         seg_img = binary_closing_opening_slice_by_slice(seg_img, 2, 2)
-        seg_img = sitk.GetArrayFromImage(seg_img)
+        seg_img_np = sitk.GetArrayFromImage(seg_img)
 
         # sanity check
-        if seg_img.sum() <= 0:
+        if seg_img_np.sum() <= 0:
             logger.warning(f"Nothing in segmentation after resampling {seg_path}!")
 
-        seg_img = make_grid(seg_img, ncols=ncols)
-        seg_contours = draw_contour(seg_img, alpha=1, width=contour_width)
+        seg_img_np = make_grid(seg_img_np, ncols=ncols)
+        seg_contours = draw_contour(seg_img_np, alpha=1, width=contour_width)
         overlayed = overlay_images(overlayed, seg_contours, alpha=contour_alpha)
+        overlayed = annotate_image(overlayed, seg_img, case_id, prob)
 
     return overlayed, attn_map_target, img_sitk
 
+def annotate_image(
+    img: np.ndarray,
+    seg: sitk.Image,
+    case_id: str,
+    prob: float,
+    ncols: int = 5
+) -> np.ndarray:
+    """Overlay case ID and prediction metadata onto a saved image.
+
+    Uses the top-left cell of a 10-row grid to place annotation text.
+
+    Args:
+        img: The image array to annotate.
+        case_id: The patient/case ID string.
+        csv_data: DataFrame containing prediction results (indexed by case ID).
+        ncols: Number of display grid columns (should match the grid used to create img).
+
+    Returns:
+        Annotated copy of the image.
+    """
+    final_decision = get_final_prediction(prob, seg)
+
+    # Build text to display
+    pred_meaning = {
+        1: 'NPC',
+        2: 'non-NPC',
+        3: 'non-NPC',
+        4: 'Undetermined'
+    }
+    display_text = f"{case_id}"
+    if prob is not None:
+        display_text += f"\nRisk: {prob:.01%}\nPred: {pred_meaning[final_decision]}"
+
+    # Write them to the image's lower right corner
+    return draw_grid_text(img, 5, 5,
+                          [display_text], [(4, 4)],
+                          text_kwargs={'fontFace': cv2.FONT_HERSHEY_SIMPLEX, 'fontScale': 0.7,
+                                       'color': (255, 255, 0), 'thickness': 2})
 
 def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
                       window_range, attn_threshold, alpha, contour_alpha, contour_width,
-                      head_settings):
+                      head_settings, csv_data=None):
     """Save all images in the filtered list to the specified directory.
 
     Args:
@@ -446,7 +483,9 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
                 alpha=alpha,
                 contour_alpha=contour_alpha,
                 contour_width=contour_width,
-                head_settings=head_settings
+                head_settings=head_settings,
+                case_id = selected_pair,
+                prob = csv_data.loc[selected_pair][PROB_CLASS_NAME] if csv_data is not None else None
             )
 
             # Save the image
@@ -460,7 +499,7 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
         except Exception as e:
             st.error(f"Failed to save image for ID {selected_pair}: {e}")
             logger.exception(e)
-            break
+            continue
 
     return saved_paths
 
@@ -616,6 +655,7 @@ else:
 csv_dir = st.session_state.csv_dir
 if csv_dir.is_file():
     csv_data = pd.read_csv(csv_dir, index_col=0)
+    csv_data.rename({'Prob_Class_0':PROB_CLASS_NAME}, axis=1, inplace=True)
 
     # If the csv is from simple inference, it will have a different format, handling it here
     # note that we require "Truth_0" column to be present. Otherwise, it's not meaningful to
@@ -628,12 +668,11 @@ if csv_dir.is_file():
         def _sigmoid(val):
             return 1 / (1 + np.exp(-val))
 
-
         logger.info("Adding Prob_0")
-        csv_data['Prob_0'] = csv_data['OverallPrediction'].astype(float).apply(_sigmoid)
+        csv_data[PROB_CLASS_NAME] = csv_data['OverallPrediction'].astype(float).apply(_sigmoid)
 
         logger.info("Adding Decision_0")
-        csv_data['Decision_0'] = csv_data['Prob_0'] > 0.5
+        csv_data['Decision_0'] = csv_data[PROB_CLASS_NAME] > 0.5
 
     st.dataframe(csv_data, key="display_data")
 
@@ -849,7 +888,9 @@ if selected_pair:
             alpha=alpha,
             contour_alpha=contour_alpha,
             contour_width=contour_width,
-            head_settings={'use_max': use_max, 'use_avg': use_avg, 'head_idx': head_idx}
+            head_settings={'use_max': use_max, 'use_avg': use_avg, 'head_idx': head_idx},
+            case_id = selected_pair,
+            prob=csv_data.loc[selected_pair][PROB_CLASS_NAME]
         )
 
         # Show the image
@@ -974,7 +1015,8 @@ if selected_pair:
                                 alpha=alpha,
                                 contour_alpha = contour_alpha,
                                 contour_width = contour_width,
-                                head_settings={'use_max': use_max, 'use_avg': use_avg, 'head_idx': head_idx}
+                                head_settings={'use_max': use_max, 'use_avg': use_avg, 'head_idx': head_idx},
+                                csv_data=filtered_csv_data
                             )
 
                             st.success(f"Successfully saved {len(saved_paths)} images to {output_dir}")

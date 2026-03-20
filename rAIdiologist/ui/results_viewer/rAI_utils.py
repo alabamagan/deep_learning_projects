@@ -11,95 +11,80 @@ def mdprint(s: str):
     except:
         print(s)
 
-def verify_spacing_and_origin(out_mri_dir, out_seg_dir, total_reader_test_size):
-    """
-    Verify and fix spacing/origin mismatches between MRI and segmentation files
+
+def get_final_prediction(prob: float, segment: sitk.Image, tolerance: float = 0.1) -> int:
+    r"""Classify a nasopharyngeal lesion into one of four diagnostic categories.
+
+    Combines the DL malignancy probability with the physical size of the
+    segmented region.  Small lesions (< 0.5 cm³) are classified by the DL
+    score alone, while larger lesions include an additional uncertainty band
+    around the decision threshold controlled by *tolerance*.
+
+    Default thresholds were derived from ``analysis_v2.ipynb``.
+
+    .. mermaid::
+        graph TD
+          A{Volume < 0.5 cm³?}
+          A -->|yes| B{DL score < 0.5?}
+          A -->|no|  C{abs DL score − 0.5 < tolerance?}
+          B -->|yes| Norm([3: Normal nasopharynx])
+          B -->|no|  Un1([4: Undetermined])
+          C -->|yes| Un2([4: Undetermined])
+          C -->|no|  D{DL score < 0.5?}
+          D -->|yes| Benign([2: Benign hyperplasia])
+          D -->|no|  NPC([1: NPC])
 
     Args:
-        out_mri_dir (Path): Directory containing MRI files
-        out_seg_dir (Path): Directory containing segmentation files
-        total_reader_test_size (int): Total number of files to process
+        prob (float): DL malignancy probability in [0, 1].  Values closer to 1
+            indicate higher likelihood of NPC.
+        tolerance (float): Half-width of the uncertainty band around the 0.5
+            decision boundary (applies to large-volume lesions only).  Predictions
+            whose probability falls within ``[0.5 − tolerance, 0.5 + tolerance)``
+            are reported as Undetermined (4).
+        segment (sitk.Image): Binary or label segmentation mask in the
+            resampled image space (isotropic 1 mm spacing assumed for physical
+            volume calculation).
 
     Returns:
-        pd.DataFrame: DataFrame containing spacing and origin verification results
+        int: Diagnostic category.
+
+        +-------+---------------------------+------------------------------------------+
+        | Value | Label                     | Condition                                |
+        +=======+===========================+==========================================+
+        | 1     | NPC                       | Large volume **and** prob ≥ 0.5 + tol    |
+        +-------+---------------------------+------------------------------------------+
+        | 2     | Benign hyperplasia        | Large volume **and** prob < 0.5 − tol    |
+        +-------+---------------------------+------------------------------------------+
+        | 3     | Normal nasopharynx        | Small volume **and** prob < 0.5          |
+        +-------+---------------------------+------------------------------------------+
+        | 4     | Undetermined              | Small volume + prob ≥ 0.5, **or**        |
+        |       |                           | large volume + prob in uncertainty band  |
+        +-------+---------------------------+------------------------------------------+
     """
-    # check if spacing of the segmentation and the mri are the same
-    spacing_info = []
-    for fn_mri, fn_seg in tqdm(zip(out_mri_dir.rglob('*.nii.gz'), out_seg_dir.rglob('*.nii.gz')),
-                               total=total_reader_test_size):
-        # Create readers for both MRI and segmentation
-        mri_reader = sitk.ImageFileReader()
-        seg_reader = sitk.ImageFileReader()
 
-        # Set the file names
-        mri_reader.SetFileName(str(fn_mri))
-        seg_reader.SetFileName(str(fn_seg))
+    # Volume threshold: 0.5 cm³ = 500 mm³
+    VOL_THR = 500.0   # mm³
+    DL_THR  = 0.5
 
-        # Read only the image information (header)
-        mri_reader.ReadImageInformation()
-        seg_reader.ReadImageInformation()
+    label_statistics = sitk.LabelShapeStatisticsImageFilter()
+    if isinstance(segment, str):
+        segment = sitk.ReadImage(segment)
+    label_statistics.Execute(segment > 0)
 
-        # Get the spacing information
-        mri_spacing = mri_reader.GetSpacing()
-        seg_spacing = seg_reader.GetSpacing()
+    volume_mm3 = 0.0
+    if label_statistics.GetNumberOfLabels() > 0:
+        volume_mm3 = label_statistics.GetPhysicalSize(1)
 
-        # Get the origin information
-        mri_origin = mri_reader.GetOrigin()
-        seg_origin = seg_reader.GetOrigin()
+    small_volume = volume_mm3 < VOL_THR
 
-        # Store spacing and origin info in a dict
-        spacing_info.append({
-            'filename': fn_mri.name,
-            'mri_spacing': mri_spacing,
-            'seg_spacing': seg_spacing,
-            'mri_origin': mri_origin,
-            'seg_origin': seg_origin,
-            'spacing_match': np.allclose(mri_spacing, seg_spacing, rtol=0, atol=0.001),
-            'origin_match': np.allclose(mri_origin, seg_origin, rtol=0, atol=0.001)
-        })
+    if small_volume:
+        return 3 if prob < DL_THR else 4           # Normal  /  Undetermined
 
-    # Create dataframe with spacing information
-    mdprint("# Spacing and Origin Verification")
-    df_spacing = pd.DataFrame(spacing_info)
-    display(df_spacing)
+    # Large-volume path: check uncertainty band first
+    if abs(prob - DL_THR) < tolerance:
+        return 4                                    # Undetermined (borderline)
 
-    # Check spacing matches
-    if not df_spacing['spacing_match'].all():
-        mdprint("## Spacing Mismatch")
-        display(df_spacing[df_spacing['spacing_match'] == False])
-
-        # For mismatched ones, resample the segmentation to match MRI spacing
-        mismatched_files = df_spacing[~df_spacing['spacing_match']]
-        for _, row in mismatched_files.iterrows():
-            fn_mri = out_mri_dir / row['filename']
-            fn_seg = out_seg_dir / row['filename']
-
-            # Read the images
-            mri = sitk.ReadImage(str(fn_mri), imageIO="NiftiImageIO")
-            seg = sitk.ReadImage(str(fn_seg), imageIO="NiftiImageIO")
-
-            # Setup resampling filter
-            resampler = sitk.ResampleImageFilter()
-            resampler.SetReferenceImage(mri)  # Use MRI as reference for spacing/size
-            resampler.SetInterpolator(sitk.sitkNearestNeighbor)  # Use nearest neighbor for label images
-
-            # Resample segmentation to match MRI spacing
-            resampled_seg = resampler.Execute(seg)
-
-            # Save resampled segmentation
-            sitk.WriteImage(resampled_seg, str(fn_seg))
-
-    else:
-        mdprint("All spacing matches")
-
-    # Check origin matches
-    if not df_spacing['origin_match'].all():
-        mdprint("## Origin Mismatch")
-        display(df_spacing[df_spacing['origin_match'] == False])
-    else:
-        mdprint("All origins match")
-
-    return df_spacing
+    return 1 if prob >= DL_THR else 2              # NPC  /  Benign hyperplasia
 
 
 def draw_grid_text(img, nrows, ncols, texts, text_coords, text_kwargs=None):
