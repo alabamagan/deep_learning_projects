@@ -493,7 +493,7 @@ class rAIdiologistInferencer(BinaryClassificationInferencer):
         uid = subject['uid']
         input_tensor = subject['input'][tio.DATA]
 
-        out_path = Path(self.output_dir).parent / 'SelfAttention'
+        out_path = Path(self.output_dir) / 'SelfAttention'
         out_path.mkdir(exist_ok=True, parents=True)
 
         # Get the last playback
