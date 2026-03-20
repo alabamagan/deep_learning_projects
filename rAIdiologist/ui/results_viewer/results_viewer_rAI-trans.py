@@ -1,35 +1,23 @@
-from pathlib import Path
-from genericpath import isfile
-from multiprocessing import Value
 import sys
 import re
-from turtle import onrelease
 import SimpleITK as sitk
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import cv2
 
 from pathlib import Path
-from mnts.utils import get_fnames_by_IDs, get_unique_IDs
 
 # Custom
 from image_utils import *
 from visualization import *
 
 import streamlit as st
-from pprint import pprint, pformat
-import plotly.express as px
-import numpy as np
 import json
 
 from typing import *
-import logging, time
+import logging
 import pydantic
-import rich
 from rich.logging import RichHandler
 from rich.traceback import install
-from rAI_utils import *
 
 install()
 
@@ -267,181 +255,6 @@ def load_image_attention_pairs(img_dir: Path, id_globber: str = r"\w+\d+"):
     paired = {sid: (image_files[sid], attn_files[sid]) for sid in intersection}
     return paired
 
-def binary_closing_opening_slice_by_slice(image, closing_radius, opening_radius, foreground_value=1,
-                                          kernel_type=sitk.sitkBall):
-    """
-    Performs binary closing followed by binary opening operations slice by slice on a 3D image.
-    Binary closing helps fill small holes and gaps in objects.
-    Binary opening helps remove small objects and noise.
-
-    Args:
-        image (sitk.Image): Input 3D binary image
-        closing_radius (int): Radius of the structuring element for closing
-        opening_radius (int): Radius of the structuring element for opening
-        foreground_value (int, optional): Value representing the foreground. Defaults to 1.
-        kernel_type (sitk.KernelEnum, optional): Type of structuring element.
-                                                Defaults to sitk.sitkBall.
-                                                Options include sitk.sitkBall, sitk.sitkBox, etc.
-
-    Returns:
-        sitk.Image: Processed 3D image with preserved metadata
-    """
-    # Check if image is 3D
-    if image.GetDimension() != 3:
-        raise ValueError("Input image must be 3D")
-
-    # Convert to numpy array for slice-by-slice processing
-    img_array = sitk.GetArrayFromImage(image)
-
-    # Get image metadata
-    spacing = image.GetSpacing()
-    origin = image.GetOrigin()
-    direction = image.GetDirection()
-
-    # Create filters for 2D operations
-    closing_filter = sitk.BinaryMorphologicalClosingImageFilter()
-    closing_filter.SetKernelRadius(closing_radius)
-    closing_filter.SetKernelType(kernel_type)
-    closing_filter.SetForegroundValue(foreground_value)
-
-    opening_filter = sitk.BinaryMorphologicalOpeningImageFilter()
-    opening_filter.SetKernelRadius(opening_radius)
-    opening_filter.SetKernelType(kernel_type)
-    opening_filter.SetForegroundValue(foreground_value)
-
-    # Process each slice
-    for z in range(img_array.shape[0]):
-        # Extract slice
-        slice_array = img_array[z, :, :]
-
-        # Convert slice to SimpleITK image (2D)
-        sitk_slice = sitk.GetImageFromArray(slice_array.astype(np.uint8))
-
-        # Apply binary closing
-        closed_slice = closing_filter.Execute(sitk_slice)
-
-        # Apply binary opening
-        opened_slice = opening_filter.Execute(closed_slice)
-
-        # Update the original array
-        img_array[z, :, :] = sitk.GetArrayFromImage(opened_slice)
-
-    # Convert processed array back to SimpleITK image
-    result_image = sitk.GetImageFromArray(img_array)
-
-    # Preserve metadata
-    result_image.SetSpacing(spacing)
-    result_image.SetOrigin(origin)
-    result_image.SetDirection(direction)
-
-    return result_image
-
-
-def create_display_image(img_path, attn_path=None, seg_path=None,
-                         window_range=(25, 99), attn_threshold=(15, 55),
-                         alpha=0.5, head_settings=None, ncols=5, contour_alpha=0.8,
-                         contour_width=1, case_id=None, prob=None):
-    """Create display image with optional attention map and segmentation overlay.
-
-    Args:
-        img_path: Path to the source image
-        attn_path: Optional path to attention map
-        seg_path: Optional path to segmentation mask
-        window_range: Tuple of (lower, upper) percentiles for window level
-        attn_threshold: Tuple of (min, max) for attention map thresholding
-        alpha: Opacity of overlays
-        head_settings: Dict containing attention head selection settings
-        ncols: Number of columns in the grid display
-
-    Returns:
-        overlayed: Final image with all overlays
-        attn_map_target: Processed attention map (or None if no attention)
-        img_sitk: SimpleITK image object
-    """
-    # Handle attention map overlay
-    if attn_path is not None:
-        overlayed, attn_map_target, img_sitk = create_overlay_image(
-            img_path,
-            window_range=window_range,
-            attn_path=attn_path,
-            attn_threshold=attn_threshold,
-            alpha=alpha,
-            head_settings=head_settings
-        )
-    else:
-        # Load and process base image only
-        image = sitk.ReadImage(str(img_path))
-        image = sitk.DICOMOrient(image, 'LPS')
-        image = sitk.GetArrayFromImage(image)
-        image = rescale_intensity(make_grid(image, ncols=ncols),
-                                  lower=window_range[0],
-                                  upper=window_range[1])
-        overlayed = image
-        attn_map_target = None
-        img_sitk = None
-
-    # Handle segmentation overlay
-    if seg_path is not None and contour_alpha > 0:
-        img_sitk = sitk.ReadImage(str(img_path))
-        img_sitk = sitk.DICOMOrient(img_sitk, 'LPS')
-        seg_img = sitk.ReadImage(str(seg_path))
-        seg_img = sitk.DICOMOrient(seg_img, 'LPS')
-
-        seg_img = sitk.Resample(seg_img, img_sitk, interpolator=sitk.sitkLabelGaussian)
-        # seg_img = sitk.BinaryMorphologicalOpening(seg_img, [2, 2, 2])
-        # seg_img = sitk.BinaryMorphologicalClosing(seg_img, [2, 2, 2])
-        seg_img = binary_closing_opening_slice_by_slice(seg_img, 2, 2)
-        seg_img_np = sitk.GetArrayFromImage(seg_img)
-
-        # sanity check
-        if seg_img_np.sum() <= 0:
-            logger.warning(f"Nothing in segmentation after resampling {seg_path}!")
-
-        seg_img_np = make_grid(seg_img_np, ncols=ncols)
-        seg_contours = draw_contour(seg_img_np, alpha=1, width=contour_width)
-        overlayed = overlay_images(overlayed, seg_contours, alpha=contour_alpha)
-        overlayed = annotate_image(overlayed, seg_img, case_id, prob)
-
-    return overlayed, attn_map_target, img_sitk
-
-def annotate_image(
-    img: np.ndarray,
-    seg: sitk.Image,
-    case_id: str,
-    prob: float,
-    ncols: int = 5
-) -> np.ndarray:
-    """Overlay case ID and prediction metadata onto a saved image.
-
-    Uses the top-left cell of a 10-row grid to place annotation text.
-
-    Args:
-        img: The image array to annotate.
-        case_id: The patient/case ID string.
-        csv_data: DataFrame containing prediction results (indexed by case ID).
-        ncols: Number of display grid columns (should match the grid used to create img).
-
-    Returns:
-        Annotated copy of the image.
-    """
-    final_decision = get_final_prediction(prob, seg)
-
-    # Build text to display
-    pred_meaning = {
-        1: 'NPC',
-        2: 'non-NPC',
-        3: 'non-NPC',
-        4: 'Undetermined'
-    }
-    display_text = f"{case_id}"
-    if prob is not None:
-        display_text += f"\nRisk: {prob:.01%}\nPred: {pred_meaning[final_decision]}"
-
-    # Write them to the image's lower right corner
-    return draw_grid_text(img, 5, 5,
-                          [display_text], [(4, 4)],
-                          text_kwargs={'fontFace': cv2.FONT_HERSHEY_SIMPLEX, 'fontScale': 0.7,
-                                       'color': (255, 255, 0), 'thickness': 2})
 
 def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
                       window_range, attn_threshold, alpha, contour_alpha, contour_width,
@@ -877,6 +690,7 @@ if selected_pair:
         seg_path = seg_paired.get(selected_pair, None) if len(seg_paired) else None
         if seg_path is not None:
             seg_path = seg_path[1]
+            logger.debug(f"Loading segmentation: {seg_path}")
 
         # Create the image using the new function
         overlayed, attn_map_target, img_sitk = create_display_image(
