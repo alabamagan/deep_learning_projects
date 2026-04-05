@@ -53,7 +53,7 @@ def rescale_intensity(image, lower=25, upper=99):
     return rescaled_image.astype(np.uint8)
 
 
-def get_final_prediction(prob: float, segment: sitk.Image, tolerance: float = 0.1) -> int:
+def get_final_prediction(prob: float, segment: sitk.Image = None, tolerance: float = 0.1, return_text: bool = False) -> Union[int, str]:
     r"""Classify a nasopharyngeal lesion into one of four diagnostic categories.
 
     Combines the DL malignancy probability with the physical size of the
@@ -102,30 +102,44 @@ def get_final_prediction(prob: float, segment: sitk.Image, tolerance: float = 0.
         |       |                           | large volume + prob in uncertainty band  |
         +-------+---------------------------+------------------------------------------+
     """
-
-    # Volume threshold: 0.5 cm³ = 500 mm³
-    VOL_THR = 500.0   # mm³
+    # Allow the option of not checking the segmentation
     DL_THR  = 0.5
+    if segment:
+        # Volume threshold: 0.5 cm³ = 500 mm³
+        VOL_THR = 500.0   # mm³
 
-    label_statistics = sitk.LabelShapeStatisticsImageFilter()
-    if isinstance(segment, str):
-        segment = sitk.ReadImage(segment)
-    label_statistics.Execute(segment > 0)
+        label_statistics = sitk.LabelShapeStatisticsImageFilter()
+        if isinstance(segment, str):
+            segment = sitk.ReadImage(segment)
+        label_statistics.Execute(segment > 0)
 
-    volume_mm3 = 0.0
-    if label_statistics.GetNumberOfLabels() > 0:
-        volume_mm3 = label_statistics.GetPhysicalSize(1)
+        volume_mm3 = 0.0
+        if label_statistics.GetNumberOfLabels() > 0:
+            volume_mm3 = label_statistics.GetPhysicalSize(1)
 
-    small_volume = volume_mm3 < VOL_THR
+        small_volume = volume_mm3 < VOL_THR
+    else:
+        small_volume = None
 
+    # Normal /  Undetermined (no seg but malignancy detected)
     if small_volume:
-        return 3 if prob < DL_THR else 4           # Normal  /  Undetermined
-
+        res = 3 if prob < DL_THR else 4
     # Large-volume path: check uncertainty band first
-    if abs(prob - DL_THR) < tolerance:
-        return 4                                    # Undetermined (borderline)
+    elif abs(prob - DL_THR) < tolerance:
+        res = 4                                    # Undetermined (borderline)
+    else:
+        res = 1 if prob >= DL_THR else 2           # NPC  /  Benign hyperplasia
 
-    return 1 if prob >= DL_THR else 2              # NPC  /  Benign hyperplasia
+    if return_text:
+        pred_meaning = {
+            1: 'NPC',
+            2: 'non-NPC',  # This actually stands for BH
+            3: 'non-NPC',  # This is for normal NP
+            4: 'Undetermined'
+        }
+        return pred_meaning[res]
+
+    return res
 
 
 def rescale_intensity(image, lower=25, upper=99):
@@ -139,10 +153,10 @@ def rescale_intensity(image, lower=25, upper=99):
 
 def annotate_image(
     img: np.ndarray,
-    seg: sitk.Image,
     case_id: str,
     prob: float,
-    ncols: int = 5
+    ncols: int = 5,
+    final_prediction_text: str = None
 ) -> np.ndarray:
     """Overlay case ID and prediction metadata onto a saved image.
 
@@ -157,18 +171,12 @@ def annotate_image(
     Returns:
         Annotated copy of the image.
     """
-    final_decision = get_final_prediction(prob, seg)
-
     # Build text to display
-    pred_meaning = {
-        1: 'NPC',
-        2: 'non-NPC',
-        3: 'non-NPC',
-        4: 'Undetermined'
-    }
     display_text = f"{case_id}"
     if prob is not None:
-        display_text += f"\nRisk: {prob:.01%}\nPred: {pred_meaning[final_decision]}"
+        display_text += f"\nRisk: {prob:.01%}"
+    if final_prediction_text is not None:
+        display_text += f"\nPred: {final_prediction_text}"
 
     # Write them to the image's lower right corner
     return draw_grid_text(img, 5, 5,
@@ -271,7 +279,7 @@ def create_display_image(img_path, attn_path=None, seg_path=None,
     """
     # Handle attention map overlay
     if attn_path is not None:
-        overlayed, attn_map_target, img_sitk = create_overlay_image(
+        overlayed, attn_map_target, img_sitk, final_prediction_text = create_overlay_image(
             img_path,
             seg_path=seg_path,
             window_range=window_range,
@@ -285,6 +293,7 @@ def create_display_image(img_path, attn_path=None, seg_path=None,
             contour_width=contour_width
         )
     else:
+        logger.warning("No attension map found, this is not the intended use of this viewer.")
         # Load and process base image only
         image = sitk.ReadImage(str(img_path))
         image = sitk.DICOMOrient(image, 'LPS')
@@ -296,10 +305,9 @@ def create_display_image(img_path, attn_path=None, seg_path=None,
         attn_map_target = None
         img_sitk = None
 
-    return overlayed, attn_map_target, img_sitk
+    return overlayed, attn_map_target, img_sitk, final_prediction_text
 
 
-@st.cache_data
 def create_overlay_image(image_path: str,
                          window_range: Tuple[int, int],
                          case_id: str,
@@ -336,6 +344,8 @@ def create_overlay_image(image_path: str,
         - overlayed: Final overlaid image
         - attn_map_target: Processed attention map (for histogram) or None if no attention map
     """
+    logger.info("No cache, drawing overlay images")
+
     # Validate required parameters for attention map
     if any(x is None for x in [attn_threshold, alpha, head_settings]):
         raise ValueError("attn_threshold, alpha, and head_settings are required when attn_path is provided")
@@ -423,13 +433,20 @@ def create_overlay_image(image_path: str,
         if seg_img_np.sum() <= 0:
             logger.warning(f"Nothing in segmentation after resampling {seg_path}!")
 
+
         # draw contour on incoming image
         seg_img_np = make_grid(seg_img_np, ncols=ncols)
         seg_contours = draw_contour(seg_img_np, alpha=1, width=contour_width)
         overlayed = overlay_images(overlayed, seg_contours, alpha=contour_alpha)
-        overlayed = annotate_image(overlayed, seg_img, case_id, prob)
+    else:
+        seg_img = None
 
-    return overlayed, attn_map_target, image
+    # Get final prediction and annotates it
+    final_prediction_text = get_final_prediction(prob, seg_img, return_text=True)
+    overlayed = annotate_image(overlayed, case_id, prob, final_prediction_text=final_prediction_text)
+    logger.info(f"{final_prediction_text = }")
+
+    return overlayed, attn_map_target, image, final_prediction_text
 
 
 def draw_grid_text(img, nrows, ncols, texts, text_coords, text_kwargs=None):

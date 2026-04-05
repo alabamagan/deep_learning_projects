@@ -280,6 +280,9 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
     saved_paths = []
     progress_bar = st.progress(0)
 
+    # Final pred dict
+    final_predictions = {}
+
     for idx, selected_pair in enumerate(filtered_intersection):
         try:
             # Get paths
@@ -287,7 +290,7 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
             seg_path = seg_paired.get(selected_pair, None)[1] if len(seg_paired) else None
 
             # Create the image
-            overlayed, _, _ = create_display_image(
+            overlayed, _, _, final_prediction_text = create_display_image(
                 img_path=img_path,
                 attn_path=attn_path,
                 seg_path=seg_path,
@@ -300,6 +303,7 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
                 case_id = selected_pair,
                 prob = csv_data.loc[selected_pair][PROB_CLASS_NAME] if csv_data is not None else None
             )
+            final_predictions[idx] = final_prediction_text
 
             # Save the image
             output_path = output_dir / f"{selected_pair}_overlay.png"
@@ -314,7 +318,7 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
             logger.exception(e)
             continue
 
-    return saved_paths
+    return saved_paths, final_predictions
 
 
 def build_configurations():
@@ -359,7 +363,7 @@ def build_configurations():
         #  Add some buttons
         col1, col2, _ = st.columns([1, 1, 3])
         with col1:
-            if st.button("Save States", use_container_width=True):
+            if st.button("Save States", width='stretch'):
                 # Dynamically get all attributes of the Configuration class and read corresponding values from session_state
                 for field_name, field in Configuration.model_fields.items():
                     if field_name != 'state_file' and field_name != 'mapper':
@@ -457,10 +461,10 @@ if seg_dir != "" and Path(seg_dir).is_dir() and st.session_state.USE_SEGMENT:
 
         seg_paired = {sid: (image_files[sid], seg_files[sid])
                       for sid in set(image_files.keys()) & set(seg_files.keys())}
-        st.success(f"Successfully loaded {len(seg_paired)} segmentation masks")
+        st.toast(f"Successfully loaded {len(seg_paired)} segmentation masks", duration='short')
     except Exception as e:
-        if len(seg_files) > 0:
-            st.warning(f"Failed to load segmentation masks: {e}")
+        st.warning(f"Failed to load segmentation masks: {e}")
+        logger.exception(e)
 else:
     st.info("Segmentation is not loaded because its not specified")
 
@@ -486,6 +490,13 @@ if csv_dir.is_file():
 
         logger.info("Adding Decision_0")
         csv_data['Decision_0'] = csv_data[PROB_CLASS_NAME] > 0.5
+
+    if 'Decision_0' in csv_data.columns and 'Truth_0' in csv_data.columns:
+        csv_data['Confusion_Matrix'] = 'Unknown'
+        csv_data.loc[(csv_data['Decision_0'] == 1) & (csv_data['Truth_0'] == 1), 'Confusion_Matrix'] = 'TP'
+        csv_data.loc[(csv_data['Decision_0'] == 0) & (csv_data['Truth_0'] == 0), 'Confusion_Matrix'] = 'TN'
+        csv_data.loc[(csv_data['Decision_0'] == 1) & (csv_data['Truth_0'] == 0), 'Confusion_Matrix'] = 'FP'
+        csv_data.loc[(csv_data['Decision_0'] == 0) & (csv_data['Truth_0'] == 1), 'Confusion_Matrix'] = 'FN'
 
     st.dataframe(csv_data, key="display_data")
 
@@ -693,7 +704,7 @@ if selected_pair:
             logger.debug(f"Loading segmentation: {seg_path}")
 
         # Create the image using the new function
-        overlayed, attn_map_target, img_sitk = create_display_image(
+        overlayed, attn_map_target, img_sitk, _ = create_display_image(
             img_path=img_path,
             attn_path=attn_path,
             seg_path=seg_path,
@@ -708,7 +719,7 @@ if selected_pair:
         )
 
         # Show the image
-        image_slot.image(overlayed, use_container_width=True)
+        image_slot.image(overlayed, width='stretch')
 
         # Load the result data and display them
         if selected_pair in filtered_csv_data.index:
@@ -773,7 +784,7 @@ if selected_pair:
     # Previous button
     col1, col2, col3 = st.columns([1, 1, 3])
     with col1:
-        if st.button('⬅️ Previous', use_container_width=True):
+        if st.button('⬅️ Previous', width='stretch'):
             current_index = selected_index
             previous_index = (current_index - 1) % len(filtered_intersection)
             st.session_state.selection_index = previous_index
@@ -781,7 +792,7 @@ if selected_pair:
 
     # Next button
     with col2:
-        if st.button('Next ➡️', use_container_width=True):
+        if st.button('Next ➡️', width='stretch'):
             current_index = selected_index
             next_index = (current_index + 1) % len(filtered_intersection) if filtered_intersection else 0
             st.session_state.selection_index = next_index
@@ -794,7 +805,7 @@ if selected_pair:
 
             save_col1, save_col2 = st.columns([1, 1])
             with save_col1:
-                if st.button('Save Current Image', use_container_width=True):
+                if st.button('Save Current Image', width='stretch'):
                     st.write("Saving...")
                     try:
                         output_dir.mkdir(parents=True, exist_ok=True)
@@ -814,12 +825,12 @@ if selected_pair:
                         st.error(f"Failed to save images: {e}")
 
             with save_col2:
-                if st.button('Save All Filtered Images', use_container_width=True):
+                if st.button('Save All Filtered Images', width='stretch'):
                     # Create a directory selector
                     if output_dir:
                         st.write("Saving all filtered images...")
                         try:
-                            saved_paths = save_batch_images(
+                            saved_paths, final_predictions = save_batch_images(
                                 filtered_intersection=filtered_intersection,
                                 paired=paired,
                                 seg_paired=seg_paired,
@@ -833,8 +844,20 @@ if selected_pair:
                                 csv_data=filtered_csv_data
                             )
 
-                            st.success(f"Successfully saved {len(saved_paths)} images to {output_dir}")
+                            # Add the final outcome decision into the dataframe
+                            _df = filtered_csv_data.copy()
+                            _s = pd.Series(final_predictions, name='Final Predictions')
+                            _df = _df.join(_s)
+
+                            # Save the dataframe
+                            csv_output_path = output_dir / "filtered_results.csv"
+                            filtered_csv_data.to_csv(csv_output_path)
+
+                            st.success(f"Successfully saved {len(saved_paths)} images and results CSV to {output_dir}")
                         except Exception as e:
                             st.error(f"Failed to save batch images: {e}")
-
+                    else:
+                        st.error(f"Specify the output directory")
+                        st.stop()
+                st.write("Note that this will also save the filtered reuslts to 'filtered_results.csv'")
 
