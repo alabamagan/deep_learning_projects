@@ -3,7 +3,7 @@ import re
 import SimpleITK as sitk
 import pandas as pd
 import plotly.graph_objects as go
-
+from datetime import datetime
 from pathlib import Path
 
 # Custom
@@ -24,19 +24,21 @@ install()
 
 class Configuration(pydantic.BaseModel):
     # Use ClassVar to mark class variables
-    state_file: ClassVar[str] = ".session_state.json"  # File path to save/load the session state
+    config_dir: ClassVar[Path] = Path(".config")  # Hidden folder to store states
     mapper: ClassVar[Dict[str, str]] = {
-        'Image Directory': 'IMAGE_DIR',  # File path holding original images
-        'Attention Map Directory': 'ATTN_DIR',  # File path holding attention maps (optional)
-        'Segmentation Directory': 'SEGMENTATION_DIR',  # File path holding segmentations (optional)
-        'Prediction CSV Directory': 'CSV_DIR',  # File path holding predictions
-        'ID Globber Regex': 'ID_GLOBBER'  # Regex to match the ID of the images and segmentations
+        'Image Directory': 'IMAGE_DIR',
+        'Attention Map Directory': 'ATTN_DIR',
+        'Segmentation Directory': 'SEGMENTATION_DIR',
+        'Prediction CSV Directory': 'CSV_DIR',
+        'ID Globber Regex': 'ID_GLOBBER',
+        'Output Directory': 'OUTPUT_DIR'
     }
     GRID_COLS: ClassVar[int] = 5
     DEFAULT_WINDOW_RANGE: ClassVar[Tuple[int, int]] = (25, 99)
     DEFAULT_ATTN_THRESHOLD: ClassVar[Tuple[int, int]] = (15, 55)
     DEFAULT_OPACITY: ClassVar[float] = 0.5
     DEFAULT_CONTOUR_ALPHA: ClassVar[float] = 0.8
+    DEFAULT_CONTOUR_WIDTH: ClassVar[int] = 2
     ATTN_MIN_VALUE: ClassVar[int] = 0
     ATTN_MAX_VALUE: ClassVar[int] = 255
     HIST_LOWER_PERCENTILE: ClassVar[int] = 2
@@ -44,17 +46,26 @@ class Configuration(pydantic.BaseModel):
 
     # File paths - instance variables
     IMAGE_DIR: str = '.'
-    ATTN_DIR: str = ''  # Optional attention map directory
-    SEGMENTATION_DIR: str = ''  # Optional segmentation directory
+    ATTN_DIR: str = ''
+    SEGMENTATION_DIR: str = ''
     CSV_DIR: str = 'results.csv'
     ID_GLOBBER: str = r"\w{0,5}\d+"
+    OUTPUT_DIR: str = './saved_images'
+    
+    # Display settings - instance variables
+    image_window_range: Tuple[int, int] = (25, 99)
+    attn_threshold: Tuple[int, int] = (15, 55)
+    attn_opacity: float = 0.5
+    contour_alpha: float = 0.8
+    contour_width: int = 2
 
     def save_to_json(self, filename: str):
         """Save the configuration to a JSON file."""
         try:
-            with open(filename, 'w') as f:
-                json.dump(self.model_dump(),
-                          f)  # Convert model to dictionary using dict() method, then save using json.dump
+            filepath = Path(filename)
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            with open(filepath, 'w') as f:
+                json.dump(self.model_dump(), f, indent=2)
                 logger.info(f"Configuration saved to {filename}")
         except Exception as e:
             logger.error(f"Failed to save configuration: {e}")
@@ -64,14 +75,44 @@ class Configuration(pydantic.BaseModel):
         """Load the configuration from a JSON file."""
         try:
             with open(filename, 'r') as f:
-                data = json.load(f)  # Load JSON data from file
-                for k, v in data.items():
-                    setattr(cls, k, v)
-                return cls(**data)  # Use unpacking operator to convert dictionary to keyword arguments
+                data = json.load(f)
+                return cls(**data)
         except Exception as e:
-            # If loading fails, return default configuration
             logger.error(f"Failed to load configuration: {e}")
             return cls()
+    
+    @classmethod
+    def get_state_filename(cls, image_path: str) -> str:
+        """Generate state filename based on image path stem and current date."""
+        p = Path(image_path) if image_path else Path("default/default")
+        stem = f"{p.parent.stem}_{p.stem}"
+        timestamp = datetime.now().strftime("%Y%m%d%H")
+        return f"{stem}_{timestamp}.json"
+    
+    @classmethod
+    def list_available_states(cls) -> List[Path]:
+        """List all available state files in the config directory."""
+        if not cls.config_dir.exists():
+            return []
+        return sorted(cls.config_dir.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)
+    
+    @classmethod
+    def get_latest_state(cls) -> Optional[Path]:
+        """Get the most recently modified state file."""
+        states = cls.list_available_states()
+        return states[0] if states else None
+    
+    @classmethod
+    def save_state(cls, config: 'Configuration', image_path: str = None):
+        """Save state to .config folder with generated filename."""
+        cls.config_dir.mkdir(exist_ok=True)
+        if image_path:
+            filename = cls.get_state_filename(image_path)
+        else:
+            filename = cls.get_state_filename("default")
+        filepath = cls.config_dir / filename
+        config.save_to_json(str(filepath))
+        return filepath
 
 
 st.set_page_config(layout="wide")
@@ -322,17 +363,30 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
 
 
 def build_configurations():
-    conf_instance = Configuration.load_from_json(
-        Configuration.state_file
-    )
-    try:
-        loaded_state = conf_instance.dump()
-    except:
-        loaded_state = {}
+    # Get available states
+    available_states = Configuration.list_available_states()
+    
+    # Load configuration
+    if 'selected_state_file' not in st.session_state and available_states:
+        st.session_state['selected_state_file'] = str(available_states[0])
+    
+    if st.session_state.get('selected_state_file') and Path(st.session_state['selected_state_file']).exists():
+        conf_instance = Configuration.load_from_json(st.session_state['selected_state_file'])
+    else:
+        conf_instance = Configuration()
 
     var_mapping = Configuration.mapper
+    
+    # Initialize session state from config
     for k, v in var_mapping.items():
-        setattr(st.session_state, v.lower(), getattr(conf_instance, v))
+        session_key = v.lower()
+        if session_key not in st.session_state:
+            setattr(st.session_state, session_key, getattr(conf_instance, v))
+    
+    # Initialize display settings
+    for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width']:
+        if field not in st.session_state:
+            st.session_state[field] = getattr(conf_instance, field)
 
     with st.expander('Configurations', expanded=st.session_state.get('require_setup', True)):
         st.write("### Instructions")
@@ -340,52 +394,59 @@ def build_configurations():
         - Insert the directories in absolute format or relative to the streamlit file
         - The ID globber is the regex that will be used to match the ID of the images and segmentations
         """)
+        
+        # State selector
+        if available_states:
+            state_options = [str(s) for s in available_states]
+            selected_state = st.selectbox(
+                "Load State",
+                options=state_options,
+                index=state_options.index(st.session_state.get('selected_state_file', state_options[0])) if st.session_state.get('selected_state_file') in state_options else 0,
+                help="Select a saved state to load"
+            )
+            if selected_state != st.session_state.get('selected_state_file'):
+                st.session_state['selected_state_file'] = selected_state
+                st.rerun()
 
         for k, v in var_mapping.items():
-            # Get type of values
             var_type = type(getattr(conf_instance, v))
 
-            # Build the fields for interactions
             if var_type == str:
                 if 'DIR' in v:
-                    # if it's a path, state is saved as a Path
                     setattr(st.session_state, v.lower(), Path(st.text_input(
                         k,
-                        value=str(loaded_state.get(v.lower(), getattr(conf_instance, v)))
+                        value=str(st.session_state.get(v.lower(), getattr(conf_instance, v)))
                     )))
                 else:
-                    # Otherwise, it's just regular text but still needs an input field
                     setattr(st.session_state, v.lower(), st.text_input(
                         k,
-                        value=loaded_state.get(v.lower(), getattr(conf_instance, v))
+                        value=st.session_state.get(v.lower(), getattr(conf_instance, v))
                     ))
 
-        #  Add some buttons
         col1, col2, _ = st.columns([1, 1, 3])
         with col1:
-            if st.button("Save States", width='stretch'):
-                # Dynamically get all attributes of the Configuration class and read corresponding values from session_state
+            if st.button("Save States", key="save_state_btn"):
+                # Update config from session state
                 for field_name, field in Configuration.model_fields.items():
-                    if field_name != 'state_file' and field_name != 'mapper':
-                        session_key = field_name.lower()
-                        if session_key in st.session_state:
-                            # Convert Path objects to strings
-                            value = st.session_state[session_key]
-                            if isinstance(value, Path):
-                                value = str(value)
-                            setattr(conf_instance, field_name, value)
-                conf_instance.save_to_json(Configuration.state_file)
+                    session_key = field_name.lower()
+                    if session_key in st.session_state:
+                        value = st.session_state[session_key]
+                        if isinstance(value, Path):
+                            value = str(value)
+                        setattr(conf_instance, field_name, value)
+                
+                # Save with image-based filename
+                image_path = st.session_state.get('image_dir', '.')
+                saved_path = Configuration.save_state(conf_instance, str(image_path))
+                st.session_state['selected_state_file'] = str(saved_path)
+                st.success(f"State saved to {saved_path.name}")
                 st.rerun()
         with col2:
             st.checkbox("Plot with segmentation", key="USE_SEGMENT")
 
 
 if 'initialized' not in st.session_state:
-    try:
-        loaded_state = Configuration.load_from_json(Configuration.state_file)
-        st.session_state['initialized'] = True
-    except:
-        loaded_state = {}
+    st.session_state['initialized'] = True
     build_configurations()
 else:
     build_configurations()
@@ -800,7 +861,7 @@ if selected_pair:
 
     with col3:
         with st.expander("💾 Save Images"):
-            output_dir = st.text_input("Output Directory", value="./saved_images")
+            output_dir = st.session_state['output_dir'] 
             output_dir = Path(output_dir)
 
             save_col1, save_col2 = st.columns([1, 1])
@@ -845,7 +906,6 @@ if selected_pair:
                             )
 
                             # Add the final outcome decision into the dataframe
-                            st.info(final_predictions)
                             _df = filtered_csv_data.copy()
                             _s = pd.Series(final_predictions, name='Final Predictions')
                             _df = _df.join(_s)
