@@ -124,8 +124,9 @@ def get_final_prediction(prob: float, segment: sitk.Image = None, tolerance: flo
     # Normal /  Undetermined (no seg but malignancy detected)
     if small_volume:
         res = 3 if prob < DL_THR else 4
+
     # Large-volume path: check uncertainty band first
-    elif abs(prob - DL_THR) < tolerance:
+    if abs(prob - DL_THR) < tolerance:
         res = 4                                    # Undetermined (borderline)
     else:
         res = 1 if prob >= DL_THR else 2           # NPC  /  Benign hyperplasia
@@ -403,8 +404,7 @@ def create_overlay_image(image_path: str,
     attn_max_val = np.max(attn_map_grid)
 
     if attn_min_val >= attn_max_val:
-        st.error("All attention values are the same")
-        st.stop()
+        raise ValueError("All attention values are the same")
 
     # Normalize and threshold attention map
     attn_map_norm = (attn_map_grid - attn_min_val) / (attn_max_val - attn_min_val)

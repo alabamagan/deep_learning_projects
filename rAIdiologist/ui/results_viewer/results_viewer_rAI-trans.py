@@ -330,28 +330,40 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
             img_path, attn_path = paired[selected_pair]
             seg_path = seg_paired.get(selected_pair, None)[1] if len(seg_paired) else None
 
-            # Create the image
-            overlayed, _, _, final_prediction_text = create_display_image(
-                img_path=img_path,
-                attn_path=attn_path,
-                seg_path=seg_path,
-                window_range=window_range,
-                attn_threshold=attn_threshold,
-                alpha=alpha,
-                contour_alpha=contour_alpha,
-                contour_width=contour_width,
-                head_settings=head_settings,
-                case_id = selected_pair,
-                prob = csv_data.loc[selected_pair][PROB_CLASS_NAME] if csv_data is not None else None
-            )
-            final_predictions[selected_pair] = final_prediction_text
+            # If there are more than one prob incoming, take first
+            prob = csv_data.loc[selected_pair][PROB_CLASS_NAME] if csv_data is not None else None
+            try:
+                if len(prob) > 1:
+                    logger.warning(f"There are more than one row for this ID: {prob}")
+                    prob = prob[0]
+            except:
+                pass
 
-            # Save the image
-            output_path = output_dir / f"{selected_pair}_overlay.png"
-            cv2.imwrite(str(output_path), cv2.cvtColor(overlayed, cv2.COLOR_BGR2RGB))
-            saved_paths.append(output_path)
+            try:
+                overlayed, _, _, final_prediction_text = create_display_image(
+                    img_path=img_path,
+                    attn_path=attn_path,
+                    seg_path=seg_path,
+                    window_range=window_range,
+                    attn_threshold=attn_threshold,
+                    alpha=alpha,
+                    contour_alpha=contour_alpha,
+                    contour_width=contour_width,
+                    head_settings=head_settings,
+                    case_id = selected_pair,
+                    prob = prob
+                )
+                final_predictions[selected_pair] = final_prediction_text
 
-            # Update progress
+                # Save the image
+                output_path = output_dir / f"{selected_pair}_overlay.png"
+                cv2.imwrite(str(output_path), cv2.cvtColor(overlayed, cv2.COLOR_BGR2RGB))
+                saved_paths.append(output_path)
+            except Exception as e:
+                st.error(f"Failed to save image for ID {selected_pair}: {e}")
+                logger.exception(e)
+
+                # Update progress
             progress_bar.progress((idx + 1) / len(filtered_intersection))
 
         except Exception as e:
@@ -377,16 +389,17 @@ def build_configurations():
 
     var_mapping = Configuration.mapper
     
-    # Initialize session state from config
-    for k, v in var_mapping.items():
-        session_key = v.lower()
-        if session_key not in st.session_state:
+    # Initialize session state from config (only on first load)
+    if 'config_initialized' not in st.session_state:
+        for k, v in var_mapping.items():
+            session_key = v.lower()
             setattr(st.session_state, session_key, getattr(conf_instance, v))
-    
-    # Initialize display settings
-    for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width']:
-        if field not in st.session_state:
+        
+        # Initialize display settings
+        for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width']:
             st.session_state[field] = getattr(conf_instance, field)
+        
+        st.session_state['config_initialized'] = True
 
     with st.expander('Configurations', expanded=st.session_state.get('require_setup', True)):
         st.write("### Instructions")
@@ -394,7 +407,7 @@ def build_configurations():
         - Insert the directories in absolute format or relative to the streamlit file
         - The ID globber is the regex that will be used to match the ID of the images and segmentations
         """)
-        
+
         # State selector
         if available_states:
             state_options = [str(s) for s in available_states]
@@ -405,44 +418,64 @@ def build_configurations():
                 help="Select a saved state to load"
             )
             if selected_state != st.session_state.get('selected_state_file'):
+                logger.info(f"Loading state from {selected_state}")
                 st.session_state['selected_state_file'] = selected_state
-                st.rerun()
-
-        for k, v in var_mapping.items():
-            var_type = type(getattr(conf_instance, v))
-
-            if var_type == str:
-                if 'DIR' in v:
-                    setattr(st.session_state, v.lower(), Path(st.text_input(
-                        k,
-                        value=str(st.session_state.get(v.lower(), getattr(conf_instance, v)))
-                    )))
-                else:
-                    setattr(st.session_state, v.lower(), st.text_input(
-                        k,
-                        value=st.session_state.get(v.lower(), getattr(conf_instance, v))
-                    ))
-
-        col1, col2, _ = st.columns([1, 1, 3])
-        with col1:
-            if st.button("Save States", key="save_state_btn"):
-                # Update config from session state
-                for field_name, field in Configuration.model_fields.items():
-                    session_key = field_name.lower()
-                    if session_key in st.session_state:
-                        value = st.session_state[session_key]
-                        if isinstance(value, Path):
-                            value = str(value)
-                        setattr(conf_instance, field_name, value)
                 
-                # Save with image-based filename
-                image_path = st.session_state.get('image_dir', '.')
-                saved_path = Configuration.save_state(conf_instance, str(image_path))
-                st.session_state['selected_state_file'] = str(saved_path)
-                st.success(f"State saved to {saved_path.name}")
+                # Reload configuration and update session state
+                new_conf = Configuration.load_from_json(selected_state)
+                for k, v in var_mapping.items():
+                    session_key = v.lower()
+                    setattr(st.session_state, session_key, getattr(new_conf, v))
+                
+                # Update display settings
+                for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width']:
+                    st.session_state[field] = getattr(new_conf, field)
+                
                 st.rerun()
-        with col2:
-            st.checkbox("Plot with segmentation", key="USE_SEGMENT")
+
+        with st.form('config_form'):
+            # ===== Form start =====
+            for k, v in var_mapping.items():
+                var_type = type(getattr(conf_instance, v))
+
+                if var_type == str:
+                    if 'DIR' in v:
+                        setattr(st.session_state, v.lower(), Path(st.text_input(
+                            k,
+                            value=str(st.session_state.get(v.lower(), getattr(conf_instance, v)))
+                        )))
+                    else:
+                        setattr(st.session_state, v.lower(), st.text_input(
+                            k,
+                            value=st.session_state.get(v.lower(), getattr(conf_instance, v))
+                        ))
+
+
+            # Buttons
+            col1, col2, _ = st.columns([1, 1, 3])
+            with col1:
+                st.form_submit_button("Apply Configurations")
+
+            with col2:
+                st.checkbox("Plot with segmentation", key="USE_SEGMENT")
+                # ====== Form end =======
+                
+        if st.button("Save States", key="save_state_btn"):
+            # Update config from session state
+            for field_name, field in Configuration.model_fields.items():
+                session_key = field_name.lower()
+                if session_key in st.session_state:
+                    value = st.session_state[session_key]
+                    if isinstance(value, Path):
+                        value = str(value)
+                    setattr(conf_instance, field_name, value)
+
+            # Save with image-based filename
+            image_path = st.session_state.get('image_dir', '.')
+            saved_path = Configuration.save_state(conf_instance, str(image_path))
+            st.session_state['selected_state_file'] = str(saved_path)
+            st.success(f"State saved to {saved_path.name}")
+            st.rerun()
 
 
 if 'initialized' not in st.session_state:
@@ -527,7 +560,10 @@ if seg_dir != "" and Path(seg_dir).is_dir() and st.session_state.USE_SEGMENT:
         st.warning(f"Failed to load segmentation masks: {e}")
         logger.exception(e)
 else:
-    st.info("Segmentation is not loaded because its not specified")
+    if not Path(seg_dir).is_dir() and st.session_state.USE_SEGMENT:
+        st.warning(f"Segmentation directory `{str(seg_dir)}` does not exist!")
+    else:
+        st.info("Segmentation is not loaded because its not specified")
 
 # Load the csv file
 csv_dir = st.session_state.csv_dir
@@ -553,7 +589,20 @@ if csv_dir.is_file():
         csv_data['Decision_0'] = csv_data[PROB_CLASS_NAME] > 0.5
 
     if 'Decision_0' in csv_data.columns and 'Truth_0' in csv_data.columns:
+        logger.info("Calculating confusion matrix categories")
+        # Do basic checking
+        if set(csv_data['Decision_0'].unique().tolist()) - {0, 1, True, False}:
+            logger.warning("The 'Decision_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics.")
+            st.warning(f"The 'Decision_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics."
+                       f"{csv_data['Decision_0'].unique()}")
+        if set(csv_data['Truth_0'].unique().tolist()) - {0, 1, True, False}:
+            logger.warning("The 'Truth_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics.")
+            st.warning(f"The 'Truth_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics."
+                       f"{csv_data['Truth_0'].unique()}")
+
         csv_data['Confusion_Matrix'] = 'Unknown'
+        csv_data['Decision_0'] = csv_data['Decision_0'].astype(int)
+        csv_data['Truth_0'] = csv_data['Truth_0'].astype(int)
         csv_data.loc[(csv_data['Decision_0'] == 1) & (csv_data['Truth_0'] == 1), 'Confusion_Matrix'] = 'TP'
         csv_data.loc[(csv_data['Decision_0'] == 0) & (csv_data['Truth_0'] == 0), 'Confusion_Matrix'] = 'TN'
         csv_data.loc[(csv_data['Decision_0'] == 1) & (csv_data['Truth_0'] == 0), 'Confusion_Matrix'] = 'FP'
@@ -757,38 +806,56 @@ if selected_pair:
                     disabled=(use_max or use_avg)
                 )
 
-    with st.spinner("Loading..."):
+    with st.spinner("Loading...") as spinner:
         img_path, attn_path = paired[selected_pair]
         seg_path = seg_paired.get(selected_pair, None) if len(seg_paired) else None
         if seg_path is not None:
             seg_path = seg_path[1]
             logger.debug(f"Loading segmentation: {seg_path}")
 
-        # Create the image using the new function
-        overlayed, attn_map_target, img_sitk, _ = create_display_image(
-            img_path=img_path,
-            attn_path=attn_path,
-            seg_path=seg_path,
-            window_range=(lower, upper),
-            attn_threshold=(attn_min, attn_max),
-            alpha=alpha,
-            contour_alpha=contour_alpha,
-            contour_width=contour_width,
-            head_settings={'use_max': use_max, 'use_avg': use_avg, 'head_idx': head_idx},
-            case_id = selected_pair,
-            prob=csv_data.loc[selected_pair][PROB_CLASS_NAME]
-        )
+        # If there are more than one prob incoming, take first
+        prob = csv_data.loc[selected_pair][PROB_CLASS_NAME]
+        try:
+            if len(prob) > 1:
+                logger.warning(f"There are more than one row for this ID: {prob}")
+                prob = prob[0]
+        except:
+            pass
 
-        # Show the image
-        image_slot.image(overlayed, width='stretch')
+        try:
+            # Create the image using the new function
+            IMAGE_DISPLAY_ERROR = False
+            overlayed, attn_map_target, img_sitk, _ = create_display_image(
+                img_path=img_path,
+                attn_path=attn_path,
+                seg_path=seg_path,
+                window_range=(lower, upper),
+                attn_threshold=(attn_min, attn_max),
+                alpha=alpha,
+                contour_alpha=contour_alpha,
+                contour_width=contour_width,
+                head_settings={'use_max': use_max, 'use_avg': use_avg, 'head_idx': head_idx},
+                case_id = selected_pair,
+                prob=prob
+            )
 
-        # Load the result data and display them
-        if selected_pair in filtered_csv_data.index:
-            logger.debug(f"Selected pair: {selected_pair}")
-            dataframe_slot.dataframe(filtered_csv_data.loc[selected_pair].to_frame().T)
-        else:
-            st.warning(f"Selected ID {selected_pair} is not found in the filtered dataset.")
-            dataframe_slot.dataframe(pd.DataFrame())
+            # Show the image
+            image_slot.image(overlayed, width='stretch')
+        except Exception as e:
+            st.error(f"Cannot process this case. Original error: {e}")
+            logger.exception(e)
+            IMAGE_DISPLAY_ERROR=True
+
+    if IMAGE_DISPLAY_ERROR:
+        st.stop() # need to put stop here to prevent spinner keeps spinning. 
+
+    # Load the result data and display them
+    if selected_pair in filtered_csv_data.index:
+        logger.debug(f"Selected pair: {selected_pair}")
+        dataframe_slot.dataframe(filtered_csv_data.loc[selected_pair].to_frame().T)
+    else:
+        st.warning(f"Selected ID {selected_pair} is not found in the filtered dataset.")
+        dataframe_slot.dataframe(pd.DataFrame())
 
     # Add histogram plot of attention map with threshold lines only if attention map is available
     if attn_map_target is not None:
