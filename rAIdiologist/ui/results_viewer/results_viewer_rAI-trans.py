@@ -303,7 +303,7 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
                 case_id = selected_pair,
                 prob = csv_data.loc[selected_pair][PROB_CLASS_NAME] if csv_data is not None else None
             )
-            final_predictions[idx] = final_prediction_text
+            final_predictions[selected_pair] = final_prediction_text
 
             # Save the image
             output_path = output_dir / f"{selected_pair}_overlay.png"
@@ -845,13 +845,14 @@ if selected_pair:
                             )
 
                             # Add the final outcome decision into the dataframe
+                            st.info(final_predictions)
                             _df = filtered_csv_data.copy()
                             _s = pd.Series(final_predictions, name='Final Predictions')
                             _df = _df.join(_s)
 
                             # Save the dataframe
                             csv_output_path = output_dir / "filtered_results.csv"
-                            filtered_csv_data.to_csv(csv_output_path)
+                            _df.to_csv(csv_output_path)
 
                             st.success(f"Successfully saved {len(saved_paths)} images and results CSV to {output_dir}")
                         except Exception as e:

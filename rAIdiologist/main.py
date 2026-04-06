@@ -32,6 +32,10 @@ import neptune
 @click.option('--pretrain' , default = False, is_flag = True , help = "For guild operation")
 @click.option('--inference-dir', type=click.Path(exists=True, dir_okay=True), required=False,
               help="Override inference directory.")
+@click.option('--inference-probmap-dir', type=click.Path(exists=True, dir_okay=True), required=False,
+              help="Override inference probmap directory.")
+@click.option('--inference-gt-dir', type=click.Path(exists=True, dir_okay=False), required=False,
+              help="Override inference ground-truth directory. Must be a csv file.")
 @click.option('--inference-output-dir', type=click.Path(exists=False, file_okay=False), required=False,
               help="Orveride the inference output directory")
 @click.option('--id-globber', type=str, default=None,
@@ -42,7 +46,7 @@ import neptune
               help="Use HKU data for inference. Ignored if it's not inference model.")
 @click.option('--model', default='rAI', type=click.Choice(['rAI', 'rAI-focused', 'scdense']),
               help="Choose between rAI and scdense.")
-def main(inference, ddp, pretrain, inference_dir, inference_output_dir, id_globber, flags_file, flags_hku_data, model):
+def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_probmap_dir, inference_output_dir, id_globber, flags_file, flags_hku_data, model):
     if model == 'rAI':
         controller_cls = rAIController
         if not pretrain:
@@ -84,9 +88,15 @@ def main(inference, ddp, pretrain, inference_dir, inference_output_dir, id_globb
 
         # override original data directory setting if force inference instead of doing testing set evaluation
         if inference_dir is not None:
+            # Note: as these are not overriden by flags file, we can change it here.
             # Remove idlist limitation
             cfg.id_list = None
             cfg.data_loader_cfg.input_dir = str(inference_dir)
+            cfg.data_loader_cfg.probmap_dir = None or str(inference_probmap_dir)
+
+            # Remove gt setting
+            cfg.data_loader_cfg.gt_dir = None or str(inference_gt_dir)
+            cfg.data_loader_cfg.target_dir = None
 
         if inference_output_dir is not None:
             # change output dir as well
@@ -126,10 +136,17 @@ def main(inference, ddp, pretrain, inference_dir, inference_output_dir, id_globb
 
     # If DDP mode is not on, simply execute one process
     if not ddp:
-        controller = controller_cls(cfg)
+        controller: PMIController = controller_cls(cfg)
         controller.override_cfg(flags_file)
+
         # Turn off verbosity so that we don't double print
         MNTSLogger.set_global_verbosity(False)
+
+        if id_globber is not None:
+            controller._logger.info(f"Overriding cfg.id_globber with cli command {cfg.data_loader_cfg.id_globber} "
+                                    f"-> {id_globber}")
+            # We need to chnage the controller's cfg instance as it's already materialized above.
+            controller.data_loader_cfg.id_globber = id_globber
 
         # override network by guild flags
         if model.find('rAI') != -1:
