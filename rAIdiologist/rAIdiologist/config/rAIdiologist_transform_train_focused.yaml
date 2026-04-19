@@ -1,4 +1,5 @@
-# For training, patches of [325, 325, 25] is further sampled from the output normalized by this yaml file
+# For training, patches of [320, 320, 25] is further sampled from the output normalized by this yaml file
+# See CFG for dataloader for more details
 
 ToCanonical:
   {}
