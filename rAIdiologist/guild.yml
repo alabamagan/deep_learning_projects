@@ -264,6 +264,8 @@
           dir: 'test'
       - exclude:
           dir: '__pycache__'
+      - exclude:
+          dir: 'lab'
       - '*.py'
       - '*.pyx'
       - '*.txt'
