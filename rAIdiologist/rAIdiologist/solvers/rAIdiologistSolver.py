@@ -201,14 +201,18 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         self._current_mode = mode
 
     def validation(self) -> list:
-        # Save current train mode
-        original_mode = self.get_net()._mode.item()
-        if original_mode > 3:
-            self._logger.info(f"Setting rAIdiologist mode to from {original_mode} -> -1 for validation.")
-            self._set_net_mode(-1) # inference when not pretraining (i.e., mode = 0)
+        if hasattr(self.get_net(), '_mode'):
+            # Save current train mode
+            original_mode = self.get_net()._mode.item()
+            if original_mode > 3:
+                self._logger.info(f"Setting rAIdiologist mode to from {original_mode} -> -1 for validation.")
+                self._set_net_mode(-1) # inference when not pretraining (i.e., mode = 0)
         super(rAIdiologistSolver, self).validation()
-        self._logger.info(f"Setting rAIdiologist mode back to {original_mode}")
-        self._set_net_mode(original_mode)
+
+        # * Set back to the original mode
+        if hasattr(self.get_net(), '_mode'):
+            self._logger.info(f"Setting rAIdiologist mode back to {original_mode}")
+            self._set_net_mode(original_mode)
 
     def _validation_step_callback(self, g: torch.Tensor, res: torch.Tensor, loss: Union[torch.Tensor, float],
                                   uids=None) -> None:
