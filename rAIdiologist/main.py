@@ -46,7 +46,10 @@ import neptune
               help="Use HKU data for inference. Ignored if it's not inference model.")
 @click.option('--model', default='rAI', type=click.Choice(['rAI', 'rAI-focused', 'scdense']),
               help="Choose between rAI and scdense.")
-def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_probmap_dir, inference_output_dir, id_globber, flags_file, flags_hku_data, model):
+@click.option('--idlist', default=None, type=click.Path(exists=True, dir_okay=False), required=False,
+              help="If provided will override training/inference setting to id list")
+def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_probmap_dir, inference_output_dir,
+         id_globber, flags_file, flags_hku_data, model, idlist):
     if model == 'rAI':
         controller_cls = rAIController
         if not pretrain:
@@ -89,13 +92,22 @@ def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_pr
         # override original data directory setting if force inference instead of doing testing set evaluation
         if inference_dir is not None:
             # Note: as these are not overriden by flags file, we can change it here.
-            # Remove idlist limitation
             cfg.id_list = None
-            cfg.data_loader_cfg.input_dir = str(inference_dir)
-            cfg.data_loader_cfg.probmap_dir = None or str(inference_probmap_dir)
 
-            # Remove gt setting
-            cfg.data_loader_cfg.gt_dir = None or str(inference_gt_dir)
+            # Special branch to handle raidiologist and scdense
+            if isinstance(cfg.data_loader_cfg, PMITorchioDataLoaderCFG):
+                cfg.data_loader_cfg.input_data = {
+                    'input': str(inference_dir),
+                    'probmap': None or str(inference_probmap_dir),
+                    'gt': None or str(inference_gt_dir)
+                }
+            else:
+                # Remove idlist limitation
+                cfg.data_loader_cfg.input_dir = str(inference_dir)
+                cfg.data_loader_cfg.probmap_dir = None or str(inference_probmap_dir)
+
+                # Remove gt setting
+                cfg.data_loader_cfg.gt_dir = None or str(inference_gt_dir)
             cfg.data_loader_cfg.target_dir = None
 
         if inference_output_dir is not None:
@@ -119,10 +131,15 @@ def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_pr
                 cfg.data_loader_cfg.gt_dir = hku_gt_dir
             cfg.data_loader_cfg.target_dir = None
 
-
             # Also remove the ID list
             cfg.id_list = None
             cfg.id_list_val = None
+
+    # If provided as option override it
+    if id_list is not None:
+        cfg.id_list = str(id_list)
+        cfg.id_list_val = str(id_list)
+        cfg.data_loader_cfg.id_list = str(id_list)
 
 
     # If pretrain, force mode open to 0, this was done in CFG already but just incase its not loaded properly
