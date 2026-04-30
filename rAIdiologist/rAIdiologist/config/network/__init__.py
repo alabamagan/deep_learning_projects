@@ -7,3 +7,4 @@ from .densenet3d import *
 from .efficientnet3d import *
 from .resnext3d import *
 from .mobilenet3d import *
+from .vit import *
