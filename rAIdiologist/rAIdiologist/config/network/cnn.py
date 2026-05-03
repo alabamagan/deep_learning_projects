@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import *
 
-__all__ = ['get_ResNet3d_101', 'get_vgg16', 'get_vgg']
+__all__ = ['get_ResNet3d','get_vgg16', 'get_vgg']
 
 # -- ResNet3d
 def get_inplanes():
@@ -102,17 +102,21 @@ class Bottleneck(nn.Module):
 
 
 class ResNet3D(nn.Module):
+    """Residual attention network with 2.5d default parameters. Tune :param:`conv1_t_size` to 7 if you'd like the
+    model to use a true 3D kernel through instead of a 2.5d one (7x7x1). Slice dimension is assumed to be the
+
+    """
     def __init__(self,
                  block,
                  layers,
                  block_inplanes,
-                 n_input_channels=3,
-                 conv1_t_size=7,
+                 n_input_channels=1,
+                 conv1_t_size=1,
                  conv1_t_stride=1,
                  no_max_pool=False,
                  shortcut_type='B',
                  widen_factor=1.0,
-                 n_classes=400):
+                 n_classes=1):
         super().__init__()
 
         block_inplanes = [int(x * widen_factor) for x in block_inplanes]
@@ -242,11 +246,6 @@ def get_ResNet3d(model_depth, **kwargs):
 
     return model
 
-def get_ResNet3d_101():
-    r"""Expected input size"""
-    m = get_ResNet3d(101, n_input_channels=1, n_classes=1, conv1_t_size=1)
-    m.set_mode = lambda x: 0 # Does nothing
-    return m
 
 # -- 3D VGG
 import torch

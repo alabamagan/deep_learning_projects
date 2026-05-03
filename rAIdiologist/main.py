@@ -46,10 +46,10 @@ import neptune
               help="Use HKU data for inference. Ignored if it's not inference model.")
 @click.option('--model', default='rAI', type=click.Choice(['rAI', 'rAI-focused', 'scdense']),
               help="Choose between rAI and scdense.")
-@click.option('--idlist', default=None, type=click.Path(exists=True, dir_okay=False), required=False,
+@click.option('--id-list', default=None, type=click.Path(exists=True, dir_okay=False), required=False,
               help="If provided will override training/inference setting to id list")
 def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_probmap_dir, inference_output_dir,
-         id_globber, flags_file, flags_hku_data, model, idlist):
+         id_globber, flags_file, flags_hku_data, model, id_list):
     if model == 'rAI':
         controller_cls = rAIController
         if not pretrain:

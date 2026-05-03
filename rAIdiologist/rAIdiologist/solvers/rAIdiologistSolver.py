@@ -62,11 +62,21 @@ class rAIdiologistSolver(BinaryClassificationSolver):
 
         # Load from stored state
         if Path(self.rAI_pretrained_CNN).is_file():
-            self._logger.info(f"Loading pretrained CNN network from: {self.rAI_pretrained_CNN}")
-            result = self.net.load_pretrained_CNN(self.rAI_pretrained_CNN)
-            if str(result) != "<All keys matched successfully>":
-                self._logger.warning(f"Some keys were not loaded.")
-                self._logger.warning(f"{result}")
+            try:
+                self._logger.info(f"Loading pretrained CNN network from: {self.rAI_pretrained_CNN}")
+                if hasattr(self.net, 'load_pretrained_CNN'):
+                    self._logger.debug("rAI load pretrained cnn path")
+                    result = self.net.load_pretrained_CNN(self.rAI_pretrained_CNN)
+                else:
+                    self._logger.debug("Regular state load path")
+                    result = self.net.load_state_dict(torch.load(self.rAI_pretrained_CNN))
+
+
+                if str(result) != "<All keys matched successfully>":
+                    self._logger.warning(f"Some keys were not loaded.")
+                    self._logger.warning(f"{result}")
+            except:
+                self._logger.warning(f"Failed to load pretrainned CNN at {self.rAI_pretrained_CNN}")
         else:
             self._logger.warning(f"Pretrained CNN network specified ({self.rAI_pretrained_CNN}) "
                                  f"but not loaded.")
