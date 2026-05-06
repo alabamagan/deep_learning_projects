@@ -18,8 +18,9 @@ from pytorch_med_imaging.inferencers import BinaryClassificationInferencer
 from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolverCFG, ClassificationSolver
 from pytorch_med_imaging.perf.classification_perf import *
 from pytorch_med_imaging.perf.segmentation_perf import EVAL as seg_eval
+import torchio as tio
 from pytorch_med_imaging.utils.visualization.segmentation_vis import *
-from pytorch_med_imaging.integration import NP_Plotter
+from pytorch_med_imaging.integration import WNB_Plotter
 from pytorch_med_imaging.pmi_data import DataLabel
 from ..config.network.rAIdiologist import rAIdiologist
 from ..config.loss.rAIdiologist_loss import ConfidenceCELoss
@@ -150,13 +151,12 @@ class SCDenseNetSolver(BinaryClassificationSolver):
             ))
 
         # Push images to plotter
-        if self.plotting and isinstance(self._plotter, NP_Plotter):
+        if self.plotting and self._plotter is not None and isinstance(self._plotter, WNB_Plotter):
             if 'seg_imgs' in df:
                 for _uid, _imgs in df['seg_imgs'].items():
                     if np.isnan(_imgs).all():
                         continue
                     self._plotter.add_image(f'val/segmentation/images/{_uid}', _imgs,
-                                            name = _uid,
                                             step = self.current_epoch)
 
 

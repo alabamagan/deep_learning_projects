@@ -23,9 +23,6 @@ from mnts.mnts_logger import MNTSLogger
 # This is now the network is created
 global rai_options
 
-# Setup metadata for neptune
-import neptune
-
 @click.command()
 @click.option('--inference', default = False, is_flag = True , help = "For guild operation")
 @click.option('--ddp'      , default = False, is_flag = True , help = "For guild operation")
@@ -88,6 +85,7 @@ def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_pr
             raise ArithmeticError(msg)
         # Put mode into inference
         cfg.run_mode = 'inference'
+        cfg.plotter_init_meta['name'] += "-inference"
 
         # override original data directory setting if force inference instead of doing testing set evaluation
         if inference_dir is not None:
@@ -188,7 +186,7 @@ def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_pr
     # run inference after training
     if not inference:
         controller.cfg.run_mode = 'inference'
-        previous_run = controller.plotter.run_id
+        controller.cfg.plotter_init_meta['name'] += "-inference"
         controller = controller_cls(controller.cfg)
         controller._plotter.add_tag(f"{model}")
         controller.exec()

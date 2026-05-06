@@ -6,7 +6,6 @@ from torch.nn.utils.rnn import *
 from torch.utils.hooks import RemovableHandle
 
 from pytorch_med_imaging.loss import BinaryFocalLoss
-from pytorch_med_imaging.integration import neptune_plotter
 import os
 import pprint
 from typing import Any, Callable, Dict, Optional, Tuple, Union

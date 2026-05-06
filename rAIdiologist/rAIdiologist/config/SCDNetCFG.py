@@ -16,9 +16,6 @@ from typing import *
 import torch
 import os
 
-# Set project meta for neptune plot
-os.environ['NEPTUNE_PROJECT'] = "CUHK-DIIR/NPC-Screening"
-
 # For training
 data_loader = PMITorchioDataLoaderCFG(
     input_data = {
@@ -120,10 +117,13 @@ class SCDControllerCFG(PMIControllerCFG):
     compile_net = False
 
     # For plotting
-    plotting        = True
-    plotter_type = 'neptune'
+    plotting          = True
+    plotter_type      = 'wandb'
     plotter_init_meta = {
-        'description': "rAIdiologists training project.",
+        'entity' : "lun-m-wong-cuhk",
+        'project': "NPC-Screening",
+        'name'   : "SCDenseNet",
+        'notes'  : "SCDenseNet training project.",
     }
 
     flags_file = 'flags_scdense.yaml'

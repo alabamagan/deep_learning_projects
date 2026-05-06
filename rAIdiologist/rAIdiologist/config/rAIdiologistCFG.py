@@ -17,10 +17,6 @@ from typing import *
 import torch
 import os
 
-# Set project meta for neptune plot
-os.environ['NEPTUNE_PROJECT'] = "CUHK-DIIR/NPC-Screening"
-
-
 # For training
 data_loader = PMIImageFeaturePairLoaderCFG(
     input_dir     = './NPC_Segmentation/60.Large-Study/v1-All-Data/Normalized_2/T2WFS_TRA/01.NyulNormalized/',
@@ -111,7 +107,7 @@ data_loader_focused_test = PMITorchioDataLoaderCFG(
 )
 
 
-class MySolverCFG(rAIdiologistSolverCFG):
+class  MySolverCFG(rAIdiologistSolverCFG):
     r"""This is created to cater for the configuration of rAIdiologist network"""
     net           = rAIdiologist(out_ch = 1, cnn_dropout= 0.2, rnn_dropout= 0.2)
     rAI_run_mode  = 1
@@ -164,10 +160,13 @@ class MyControllerCFG(PMIControllerCFG):
     compile_net = False
 
     # For plotting
-    plotting        = True
-    plotter_type = 'neptune'
-    plotter_init_meta = {
-        'description': "rAIdiologists training project."
+    plotting          = True
+    plotter_type      = 'wandb'
+    plotter_init_meta = { # Use wandb
+        'entity' : "lun-m-wong-cuhk",
+        'project': "NPC-Screening",
+        'name': "rAIdiologist",
+        'notes'  : "rAIdiologists training project.",
     }
 
 
@@ -183,7 +182,10 @@ class PretrainControllerCFG(MyControllerCFG):
     solver_cfg.rAI_fixed_mode = 0
 
     plotter_init_meta = {
-        'description': "rAIdioglogist focused pre-training.",
+        'entity' : "lun-m-wong-cuhk",
+        'project': "NPC-Screening",
+        'name': "rAIdiologist-Pretrain",
+        'notes'  : "rAIdiologists pre-training project.",
     }
 
 
@@ -202,7 +204,10 @@ class rAIControllerFocusedCFG(MyControllerCFG):
     id_list_val = id_list_dir + "/Validation-focused.txt"
 
     plotter_init_meta = {
-        'description': "rAIdiologists focused training project."
+        'entity' : "lun-m-wong-cuhk",
+        'project': "NPC-Screening",
+        'name': "rAIdiologist-Focused",
+        'notes'  : "rAIdiologists focused training project.",
     }
 
 

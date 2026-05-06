@@ -184,7 +184,7 @@ class rAIdiologistSolver(BinaryClassificationSolver):
     def _epoch_prehook(self, *args, **kwargs):
         r"""Update mode of network"""
         super(rAIdiologistSolver, self)._epoch_prehook(*args, **kwargs)
-        current_epoch = self.plotter_dict.get('epoch_num', 0)
+        current_epoch = self.current_epoch
         total_epoch = self.num_of_epochs
 
         # Schedule mode of the network and findout if new mode is needed
