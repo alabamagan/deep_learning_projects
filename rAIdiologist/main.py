@@ -43,10 +43,12 @@ global rai_options
               help="Use HKU data for inference. Ignored if it's not inference model.")
 @click.option('--model', default='rAI', type=click.Choice(['rAI', 'rAI-focused', 'scdense']),
               help="Choose between rAI and scdense.")
+@click.option('--plotter/--no-plotter', default=True,
+              help="Use --no-plotter to deactivate plotter activitiy.")
 @click.option('--id-list', default=None, type=click.Path(exists=True, dir_okay=False), required=False,
               help="If provided will override training/inference setting to id list")
 def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_probmap_dir, inference_output_dir,
-         id_globber, flags_file, flags_hku_data, model, id_list):
+         id_globber, flags_file, flags_hku_data, model, plotter, id_list):
     if model == 'rAI':
         controller_cls = rAIController
         if not pretrain:
@@ -107,6 +109,12 @@ def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_pr
                 # Remove gt setting
                 cfg.data_loader_cfg.gt_dir = None or str(inference_gt_dir)
             cfg.data_loader_cfg.target_dir = None
+        else:
+            # If CFG specified directories are remained used but want to test different
+            # segmentation reference, this is still available
+            if inference_probmap_dir is not None:
+                cfg.data_loader_cfg.probmap_dir = None or str(inference_probmap_dir)
+
 
         if inference_output_dir is not None:
             # change output dir as well
@@ -148,6 +156,9 @@ def main(inference, ddp, pretrain, inference_dir, inference_gt_dir, inference_pr
         loaded_flags['solver_cfg']['rAI_fixed_mode'] = 0
         with open(flags_file, 'w') as f:
             yaml.dump(loaded_flags, f)
+
+    if not plotter:
+        cfg.plotting = False
 
     # If DDP mode is not on, simply execute one process
     if not ddp:
