@@ -39,6 +39,7 @@ class Configuration(pydantic.BaseModel):
     DEFAULT_OPACITY: ClassVar[float] = 0.5
     DEFAULT_CONTOUR_ALPHA: ClassVar[float] = 0.8
     DEFAULT_CONTOUR_WIDTH: ClassVar[int] = 2
+    DEFAULT_SLICE_OFFSET: ClassVar[int] = 0
     ATTN_MIN_VALUE: ClassVar[int] = 0
     ATTN_MAX_VALUE: ClassVar[int] = 255
     HIST_LOWER_PERCENTILE: ClassVar[int] = 2
@@ -58,6 +59,7 @@ class Configuration(pydantic.BaseModel):
     attn_opacity: float = 0.5
     contour_alpha: float = 0.8
     contour_width: int = 2
+    slice_offset: int = 0
 
     def save_to_json(self, filename: str):
         """Save the configuration to a JSON file."""
@@ -299,7 +301,7 @@ def load_image_attention_pairs(img_dir: Path, id_globber: str = r"\w+\d+"):
 
 def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
                       window_range, attn_threshold, alpha, contour_alpha, contour_width,
-                      head_settings, csv_data=None):
+                      head_settings, csv_data=None, slice_offset=0):
     """Save all images in the filtered list to the specified directory.
 
     Args:
@@ -350,8 +352,9 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
                     contour_alpha=contour_alpha,
                     contour_width=contour_width,
                     head_settings=head_settings,
-                    case_id = selected_pair,
-                    prob = prob
+                    case_id=selected_pair,
+                    prob=prob,
+                    slice_offset=slice_offset
                 )
                 final_predictions[selected_pair] = final_prediction_text
 
@@ -396,7 +399,7 @@ def build_configurations():
             setattr(st.session_state, session_key, getattr(conf_instance, v))
         
         # Initialize display settings
-        for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width']:
+        for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width', 'slice_offset']:
             st.session_state[field] = getattr(conf_instance, field)
         
         st.session_state['config_initialized'] = True
@@ -428,7 +431,7 @@ def build_configurations():
                     setattr(st.session_state, session_key, getattr(new_conf, v))
                 
                 # Update display settings
-                for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width']:
+                for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width', 'slice_offset']:
                     st.session_state[field] = getattr(new_conf, field)
                 
                 st.rerun()
@@ -788,6 +791,15 @@ if selected_pair:
 
             contour_width = st.number_input('Contour Width', min_value=1, max_value=5, step=1)
 
+            slice_offset = st.number_input(
+                'Slice Offset',
+                min_value=0,
+                step=1,
+                value=st.session_state.get('slice_offset', Configuration.DEFAULT_SLICE_OFFSET),
+                help="Number of slices to skip from the start of the volume before building the grid display"
+            )
+            st.session_state['slice_offset'] = slice_offset
+
         with col2:
             st.write("### Attention Head Selection")
             # Add controls for attention head selection
@@ -835,8 +847,9 @@ if selected_pair:
                 contour_alpha=contour_alpha,
                 contour_width=contour_width,
                 head_settings={'use_max': use_max, 'use_avg': use_avg, 'head_idx': head_idx},
-                case_id = selected_pair,
-                prob=prob
+                case_id=selected_pair,
+                prob=prob,
+                slice_offset=st.session_state.get('slice_offset', 0)
             )
 
             # Show the image
@@ -966,10 +979,11 @@ if selected_pair:
                                 window_range=(lower, upper),
                                 attn_threshold=(attn_min, attn_max),
                                 alpha=alpha,
-                                contour_alpha = contour_alpha,
-                                contour_width = contour_width,
+                                contour_alpha=contour_alpha,
+                                contour_width=contour_width,
                                 head_settings={'use_max': use_max, 'use_avg': use_avg, 'head_idx': head_idx},
-                                csv_data=filtered_csv_data
+                                csv_data=filtered_csv_data,
+                                slice_offset=st.session_state.get('slice_offset', 0)
                             )
 
                             # Add the final outcome decision into the dataframe
