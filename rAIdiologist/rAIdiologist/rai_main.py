@@ -40,7 +40,7 @@ rai_options = {
         'densenet3d201'     : get_densenet3d('201'),                 # DenseNet3D-201
         'densenet3d264'     : get_densenet3d('264'),                 # DenseNet3D-264
         'scdense'           : SCDenseNet(),
-        'vit'               : ViT(1, 1, num_slices=25)
+        **({'vit': ViT(1, 1, num_slices=25)} if TRANSFORMERS_AVAILABLE else {}),
 
     }
 }

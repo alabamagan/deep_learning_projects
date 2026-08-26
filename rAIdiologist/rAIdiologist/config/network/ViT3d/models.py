@@ -26,7 +26,7 @@ from .configs import *
 from ..slicewise_ran import RAN_25D
 from pytorch_med_imaging.networks.layers import ResidualBlock3d, Conv3d as Conv3d_pmi
 from pytorch_med_imaging.networks.layers.StandardLayers3D import MaskedSequential3d
-from pytorch_med_imaging.networks.AttentionResidual import AttentionModule_25d
+from ..attention_residual import AttentionModule_25d
 from typing import Optional
 from torch.distributions.normal import Normal
 from einops import rearrange, repeat

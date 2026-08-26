@@ -77,6 +77,9 @@ docs = [
     "sphinx-rtd-theme>=1.0",
     "sphinxcontrib-napoleon>=0.7"
 ]
+transformers = [
+    "transformers>=4.20.0"
+]
 
 [project.scripts]
 rAIdiologist = "rAIdiologist.main:main"

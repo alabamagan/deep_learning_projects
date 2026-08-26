@@ -1,10 +1,17 @@
 import torch
 from torch import nn
 from einops import rearrange
-from transformers import ViTConfig
-from transformers.models.vit.modeling_vit import ViTEncoder
 
-__all__ = ['ViT']
+try:
+    from transformers import ViTConfig
+    from transformers.models.vit.modeling_vit import ViTEncoder
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+    ViTConfig = None
+    ViTEncoder = None
+
+__all__ = ['ViT', 'TRANSFORMERS_AVAILABLE']
 
 class ViT(nn.Module):
     def __init__(self, channels, num_classes, image_size=320, patch_size=16, dim=512, depth=6, heads=8, mlp_dim=1024,
@@ -21,6 +28,11 @@ class ViT(nn.Module):
                          For volumetric inputs pass the fixed slice count; forward() then expects
                          tensors of shape  b x c x H x W x S.
         """
+        if not TRANSFORMERS_AVAILABLE:
+            raise ImportError(
+                "The 'transformers' package is required for ViT. "
+                "Install it with: pip install 'rAIdiologist[transformers]'  or  pip install transformers"
+            )
         super().__init__()
         image_height, image_width = image_size if isinstance(image_size, tuple) else (image_size, image_size)
         patch_height, patch_width = patch_size if isinstance(patch_size, tuple) else (patch_size, patch_size)

@@ -1,6 +1,6 @@
 import unittest
 import torch
-from rAIdiologist.config.network.cnn import get_ResNet3d_101, get_vgg16, get_vgg
+from rAIdiologist.config.network.cnn import get_ResNet3d, get_vgg16, get_vgg
 import torch.nn as nn
 from rAIdiologist.config.network.densenet3d import get_densenet3d_121, get_densenet3d
 from rAIdiologist.config.network.rAIdiologist import create_rAIdiologist_v1, create_rAIdiologist_v2, create_rAIdiologist_v3, create_rAIdiologist_v4, create_rAIdiologist_v41, create_rAIdiologist_v42, create_rAIdiologist_v43, create_rAIdiologist_v5, create_rAIdiologist_v5_1, create_rAIdiologist_v5_1_focused, create_old_rAI, create_old_rAI_rmean
@@ -47,7 +47,7 @@ class TestNetworkForward(unittest.TestCase):
 class TestResNet3d101(TestNetworkForward):
     def setUp(self):
         super().setUp()
-        self.model = get_ResNet3d_101()
+        self.model = get_ResNet3d(101)
 
     def test_forward(self):
         self._test_forward_pass(self.model, self.input_shape, self.output_dim)

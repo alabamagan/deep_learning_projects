@@ -5,8 +5,8 @@ import torch.nn.functional as F
 from typing import Union, Optional
 from  pytorch_med_imaging.networks.layers import ResidualBlock3d, DoubleConv3d, Conv3d
 from pytorch_med_imaging.networks.layers.StandardLayers3D import MaskedSequential3d
-from  pytorch_med_imaging.networks.AttentionResidual import AttentionModule_25d, AttentionModule_25d_recur
-from  pytorch_med_imaging.networks.third_party_nets.spacecutter import LogisticCumulativeLink
+from .attention_residual import AttentionModule_25d, AttentionModule_25d_recur
+from .spacecutter import LogisticCumulativeLink
 import pprint
 
 

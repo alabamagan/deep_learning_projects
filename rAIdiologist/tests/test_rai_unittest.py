@@ -227,7 +227,7 @@ class TestOtherCNNs(Test3DNetworks):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.nets = [
-            get_ResNet3d_101(), 
+            get_ResNet3d(101),
             get_vgg16()
         ]
         self._logger = MNTSLogger['TestOtherCNNs']
