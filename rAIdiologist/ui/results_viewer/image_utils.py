@@ -260,7 +260,7 @@ def binary_closing_opening_slice_by_slice(image, closing_radius, opening_radius,
 def create_display_image(img_path, attn_path=None, seg_path=None,
                          window_range=(25, 99), attn_threshold=(15, 55),
                          alpha=0.5, head_settings=None, ncols=5, contour_alpha=0.8,
-                         contour_width=1, case_id=None, prob=None):
+                         contour_width=1, case_id=None, prob=None, slice_offset=0):
     """Create display image with optional attention map and segmentation overlay.
 
     Args:
@@ -272,6 +272,7 @@ def create_display_image(img_path, attn_path=None, seg_path=None,
         alpha: Opacity of overlays
         head_settings: Dict containing attention head selection settings
         ncols: Number of columns in the grid display
+        slice_offset: Number of slices to skip from the start before building the grid
 
     Returns:
         overlayed: Final image with all overlays
@@ -291,7 +292,8 @@ def create_display_image(img_path, attn_path=None, seg_path=None,
             case_id=case_id,
             prob=prob,
             contour_alpha=contour_alpha,
-            contour_width=contour_width
+            contour_width=contour_width,
+            slice_offset=slice_offset
         )
     else:
         logger.warning("No attension map found, this is not the intended use of this viewer.")
@@ -299,6 +301,8 @@ def create_display_image(img_path, attn_path=None, seg_path=None,
         image = sitk.ReadImage(str(img_path))
         image = sitk.DICOMOrient(image, 'LPS')
         image = sitk.GetArrayFromImage(image)
+        if slice_offset > 0:
+            image = image[slice_offset:]
         image = rescale_intensity(make_grid(image, ncols=ncols),
                                   lower=window_range[0],
                                   upper=window_range[1])
@@ -319,7 +323,8 @@ def create_overlay_image(image_path: str,
                          alpha: Optional[float] = None,
                          contour_alpha: Optional[float] = 0.8,
                          contour_width: Optional[int] = 1,
-                         head_settings: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+                         head_settings: Optional[Dict[str, Any]] = None,
+                         slice_offset: int = 0) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """Create an overlay image display with optional attention map and segmentation
 
     Args:
@@ -357,6 +362,8 @@ def create_overlay_image(image_path: str,
 
     # Convert to numpy array and create grid
     np_image = sitk.GetArrayFromImage(image)
+    if slice_offset > 0:
+        np_image = np_image[slice_offset:]
     ncols = 5
     grid_image = rescale_intensity(make_grid(np_image, ncols=ncols),
                                    lower=window_range[0],
@@ -379,6 +386,8 @@ def create_overlay_image(image_path: str,
 
     # Convert to numpy array
     np_attn_map = sitk.GetArrayFromImage(attn_map)
+    if slice_offset > 0:
+        np_attn_map = np_attn_map[slice_offset:]
 
     # Get number of attention heads
     num_heads = np_attn_map.shape[-1]
@@ -428,6 +437,8 @@ def create_overlay_image(image_path: str,
         # seg_img = sitk.BinaryMorphologicalClosing(seg_img, [2, 2, 2])
         seg_img = binary_closing_opening_slice_by_slice(seg_img, 2, 2)
         seg_img_np = sitk.GetArrayFromImage(seg_img)
+        if slice_offset > 0:
+            seg_img_np = seg_img_np[slice_offset:]
 
         # sanity check
         if seg_img_np.sum() <= 0:
