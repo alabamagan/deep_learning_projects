@@ -2,18 +2,12 @@ import pprint
 from pathlib import Path
 
 import click
-import pandas as pd
-from onnxruntime.capi.onnxruntime_pybind11_state import RuntimeException
-from tqdm import tqdm
-
-import torchio
-import torchio as tio
-from mnts.mnts_logger import MNTSLogger
-from mnts.utils import get_unique_IDs
-from mnts.utils.filename_globber import get_fnames_by_IDs
-from pytorch_med_imaging.pmi_data_loader.augmenter_factory import create_transform_compose
-from rAIdiologist.config.network.lstm_rater import TransformerEncoderLayerWithAttn
+from pytorch_med_imaging.pmi_data_loader import PMITorchioDataLoader, PMITorchioDataLoaderCFG
+from rAIdiologist.solvers import rAIdiologistSolverCFG, rAIdiologistInferencer
 from rAIdiologist.config.network.rAIdiologist import *
+from rAIdiologist.rai_controller import PMIControllerCFG, rAIController
+
+from mnts.mnts_logger import MNTSLogger
 
 
 class Args:
@@ -26,8 +20,12 @@ class Args:
 @click.command()
 @click.option('--image-data-dir',
               type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
-              default=Path("/home/lwong/Source/Repos/NPC_Segmentation/NPC_Segmentation/60.Large-Study/HKU_data/NyulNormalizer"),
               help='Directory for image data. All files with .nii.gz suffix are globbed.',
+              required=True)
+@click.option('--probmap-dir',
+              type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+              help='Directory for segmentation data with .nii.gz suffix, the ID should pair with data found in provided'
+                   ' image-data-dir.',
               required=True)
 @click.option('--checkpoint-dir',
               type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
@@ -66,128 +64,83 @@ class Args:
               is_flag=True,
               help="For debugging.")
 def main(**kwargs):
+    r"""Easy-to-use cli for inferencing the network.
+
+    Args:
+        **kwargs:
+
+    Returns:
+
+    """
     args = Args(**kwargs)
 
     with (torch.no_grad(),
-          MNTSLogger(".", "PlaybackTest", verbose=True, log_level='debug',
+        MNTSLogger(".", "PlaybackTest", verbose=True, log_level='debug',
                      keep_file=False) as logger):
         logger.debug(f'f{args = }')
 
-        # Load idlist
-        if args.id_list_dir is not None:
-            # if its a txt file, read line by line
-            if args.id_list_dir.suffix == '.txt':
-                args.id_list = [str(r.strip()) for r in args._id_list_dir.open('r').readlines()]
-            # if it has .ini suffix
-            elif args.id_list_dir.suffix == '.ini':
-                from configparser import ConfigParser
-                parser = ConfigParser()
-                parser.read(str(args.id_list_dir))
-                args.id_list = parser['FileList']['testing'].split(',')
-            else:
-                raise FileError("Input id_list_dir is incorrect, must be .txt or .ini")
+        # -- update the cfg with input parameters
+        # Setup dataloader CFG
+        data_loader_cfg = PMITorchioDataLoaderCFG(
+            input_data = { # TODO: implement ground-truth for auto analysis
+                'input' :   args.image_data_dir,
+                'probmap' : args.probmap_dir
 
-        fname = get_fnames_by_IDs(
-            args.image_data_dir.glob("*nii.gz"),
-            idlist=args.id_list if len(args.id_list) else get_unique_IDs(args.image_data_dir.glob("*nii.gz"), args.id_globber),
-            globber=args.id_globber,
-            return_dict=True
+            },
+            input_dtypes = {
+                'probmap': 'uint8'
+            },
+            master_data_key='input',
+            augmentation=args.inference_transform,
+            ignore_missing_ids=True,
+            sampler='weighted',
+            sampler_kwargs = dict(
+                patch_size = [320,320,25]
+            ),
+            tio_queue_kwargs=dict(  # `dict passed to ``tio.Queue``
+                max_length         = 15,
+                samples_per_volume = 1,
+                num_workers        = min(12, os.cpu_count() * 3 // 4),
+                shuffle_subjects   = True,
+                shuffle_patches    = True,
+                start_background   = True,
+                verbose            = True,
+
+            )
+        )
+        # Setup Inferencer CFG
+        inferencer_cfg = rAIdiologistSolverCFG(
+            net                          = create_rAIdiologist_v5_1(),
+            batch_size                   = 8,
+            unpack_key_inference         = ['input'],
+            rAI_inf_save_playbacks       = True,
+            rAI_fixed_mode               = -1
+
         )
 
-        # Create a dictionary of TorchIO ScalarImage objects from the file names
-        tio_images = {k: torchio.ScalarImage(f) for k, f in fname.items() if len(f) == 1}
-        # Check the length of the dictionary
-        if not len(tio_images):
-            raise RuntimeError("Cannot find any images from the files")
-        # For output predictions
+        # Setup Controller CFG
+        # BUG: don't know why but this declartion tries to set data_loader_cfg
+        controller_cfg = PMIControllerCFG(
+            run_mode        = 'inference',
+            fold_code       = None, # this will disable replacements``
+            id_list         = args.id_list or args.id_list_file,
+            cp_load_dir     = args.checkpoint_dir,
+            output_dir      = args.output_dir,
+            log_dir         = "./inference.log",
+        )
 
-        # Create a transformation pipeline for inference
-        tio_transform = create_transform_compose(args.inference_transform)
-        subjects = [tio.Subject(input=tioimg, sid=sid) for sid, tioimg in tio_images.items()]
-        # Create a TorchIO SubjectsDataset using the subjects and transformation
-        subjects_dataset = tio.SubjectsDataset(subjects, transform=tio_transform)
 
-        # Initialize the model
-        m: rAIdiologist_Transformer = create_rAIdiologist_v5_1()
-        m.set_mode(5)
-        m.load_state_dict(torch.load(args.checkpoint_dir))
-        m = m.cuda()
-        m.eval()
-        logger.debug(f"Created network: {m}")
 
-        # Prepare excel output file
-        out_df_fname = args.output_dir / 'predictions.csv'
-        logger.debug(f"Output target: {out_df_fname}")
+        # -- Create the CVS
+        controller = rAIController(controller_cfg)
+        # note that properties needs to be set after instant creation
+        controller_cfg.solver_cfg=inferencer_cfg, # Inferencer and solver use the same CFG keyword
+        controller.inferencer_cls = rAIdiologistInferencer
+        controller.data_loader_cls = PMITorchioDataLoader
+        controller.solver_cfg = inferencer_cfg
+        controller.data_loader_cfg = data_loader_cfg
+        controller.exec()
 
-        # Enable recording of model operations
-        m.RECORD_ON = True
-        grid_size = {
-            'w': m._grid_size[0],
-            'h': m._grid_size[1],
-            's': 24 # this is currently hardcoded
-        }
-        logger.debug(f"Grid size: {grid_size}")
-
-        CONTINUE_FLAG = False
-        if out_df_fname.exists():
-            df_predictions = pd.read_csv(out_df_fname, index_col=0)
-        else:
-            df_predictions = pd.DataFrame(columns=['OverallPrediction', 'TransformerConfidence', 'TransformerPrediction'])
-        for sub in tqdm(subjects_dataset):
-            try:
-                # Log the subject ID
-                logger.info(f"{sub['sid'] = }")
-
-                # Prepare input tensor for the model
-                in_tensor = sub['input'][tio.DATA].float().cuda()
-                sid = sub['sid']
-
-                # Perform inference using the model
-                x = m(in_tensor)
-
-                # Record the prediction
-                df_predictions.loc[sid] = x.flatten().cpu().tolist()
-
-                # Retrieve and clean the model playback data
-                playback = m.get_playback()
-                m.clean_playback()
-
-                playback = playback[0]
-                play_back_prediction, play_back_confidence = TransformerEncoderLayerWithAttn.sa_from_playback(
-                    playback, in_tensor, grid_size
-                )
-
-                # Save the images to the output directory
-                img = tio.ScalarImage(
-                    tensor=in_tensor.cpu()[..., 1:])  # Remove the first slice matching network's `forward`
-                img.save(args.output_dir / f"{sid}.nii.gz")
-                play_back_prediction.save(args.output_dir / f"{sid}_heatmap.nii.gz")
-                play_back_confidence.save(args.output_dir / f"{sid}_confidence.nii.gz")
-                logger.info(f"{sub['sid']} done.")
-
-                if args.debug:
-                    if df_predictions.shape[0] > 3:
-                        logger.debug("Debug mode interruption.")
-                        logger.debug("\n" + df_predictions.to_string())
-                        continue
-            except Exception as e:
-                logger.error(e)
-                logger.exception(e)
-                if not CONTINUE_FLAG:
-                    choice = click.prompt("Continue? a for always. (y/n/a)[y]",
-                                          default='y',
-                                          type=click.Choice(['y', 'n', 'a'], case_sensitive=False))
-                    if choice == 'y':
-                        continue
-                    elif choice == 'n':
-                        return
-                    elif choice == 'a':
-                        CONTINUE_FLAG = True
-                        continue
-                    else:
-                        raise RuntimeError("How did you get here?")
-                continue
-        df_predictions.to_csv(out_df_fname, index=True)
 
 if __name__ == '__main__':
     main()
