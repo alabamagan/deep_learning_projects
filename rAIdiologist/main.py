@@ -5,7 +5,8 @@ from pytorch_med_imaging.solvers import BinaryClassificationSolver, Classificati
 from pytorch_med_imaging.inferencers import BinaryClassificationInferencer, ClassificationInferencer
 from pytorch_med_imaging.pmi_data_loader import (PMIImageDataLoaderCFG, PMIImageDataLoader,
                                                  PMITorchioDataLoader, PMITorchioDataLoaderCFG)
-from rAIdiologist.config import rAIdiologistCFG, SCDControllerCFG
+from rAIdiologist.config import rAIdiologistCFG
+from rAIdiologist.config.SCDNetCFG import SCDControllerCFG
 from rAIdiologist.config.network import *
 from rAIdiologist.config.loss import *
 from rAIdiologist.rai_main import *

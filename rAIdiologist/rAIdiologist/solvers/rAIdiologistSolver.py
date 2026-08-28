@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import TYPE_CHECKING, Iterable, List, Optional, Tuple
 
 import einops
 import numpy as np
@@ -15,7 +15,6 @@ from pytorch_med_imaging.pmi_data_loader import *
 from ..config.loss.rAIdiologist_loss import ConfidenceCELoss
 from ..config.network.lstm_rater import *
 from ..config.network.rAIdiologist import *
-
 
 
 class rAIdiologistSolverCFG(ClassificationSolverCFG):
@@ -54,6 +53,21 @@ class rAIdiologistSolver(BinaryClassificationSolver):
         If `self.rAI_classification` is set to True, the solver will pass some function to ClassificationSolver because
         the output of the network is expect to be multi-class classification.
     """
+    if TYPE_CHECKING:
+        # rAIdiologistSolverCFG
+        rAI_fixed_mode        : Optional[int]
+        rAI_pretrained_CNN    : str
+        rAI_classification    : bool
+        rAI_inf_save_playbacks: bool
+        rAI_pretrain_mode     : bool
+        # ClassificationSolverCFG
+        ordinal_class         : bool
+        ordinal_mse           : bool
+        sig_out               : bool
+        # SolverBaseCFG
+        num_of_epochs         : Optional[int]
+        loss_function         : nn.Module
+
     def __init__(self, cfg, *args, **kwargs):
         super(rAIdiologistSolver, self).__init__(cfg, *args, **kwargs)
 
