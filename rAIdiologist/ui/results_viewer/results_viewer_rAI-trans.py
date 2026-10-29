@@ -52,7 +52,7 @@ class Configuration(pydantic.BaseModel):
     CSV_DIR: str = 'results.csv'
     ID_GLOBBER: str = r"\w{0,5}\d+"
     OUTPUT_DIR: str = './saved_images'
-    
+
     # Display settings - instance variables
     image_window_range: Tuple[int, int] = (25, 99)
     attn_threshold: Tuple[int, int] = (15, 55)
@@ -82,7 +82,7 @@ class Configuration(pydantic.BaseModel):
         except Exception as e:
             logger.error(f"Failed to load configuration: {e}")
             return cls()
-    
+
     @classmethod
     def get_state_filename(cls, image_path: str) -> str:
         """Generate state filename based on image path stem and current date."""
@@ -90,20 +90,20 @@ class Configuration(pydantic.BaseModel):
         stem = f"{p.parent.stem}_{p.stem}"
         timestamp = datetime.now().strftime("%Y%m%d%H")
         return f"{stem}_{timestamp}.json"
-    
+
     @classmethod
     def list_available_states(cls) -> List[Path]:
         """List all available state files in the config directory."""
         if not cls.config_dir.exists():
             return []
         return sorted(cls.config_dir.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)
-    
+
     @classmethod
     def get_latest_state(cls) -> Optional[Path]:
         """Get the most recently modified state file."""
         states = cls.list_available_states()
         return states[0] if states else None
-    
+
     @classmethod
     def save_state(cls, config: 'Configuration', image_path: str = None):
         """Save state to .config folder with generated filename."""
@@ -199,15 +199,15 @@ with st.expander("📃 Technical Details"):
         | | Original Image | Shows unprocessed image |
         | | Attention Map | Shows attention distribution |
         | | Overlaid Result | Shows combined view |
-        
+
         ## 📊 Prediction results format guide
-        
+
         The prediction results should be a .csv or .xlsx file with the following columns:
         1. Index: this needs to be the left-most column
         2. Decision_0: this is the AI-prediction reduced to binary prediction
         3. Prob_0: this is the original probability
         4. Truth_0 (Optional): this is the reference standard used for evaluation
-        
+
         """
 
     )
@@ -265,15 +265,20 @@ def _exception_hook(exctype, value, traceback):
 
 
 sys.excepthook = _exception_hook
+
+
 # -- Setup style
 # Load the CSS file
 def load_css(file_name):
     with open(file_name) as f:
         st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+
+
 load_css("./style.css")
 
 # -- Define some useful functions
 PROB_CLASS_NAME = 'Prob_0'
+
 
 @st.cache_data
 def load_image_attention_pairs(img_dir: Path, id_globber: str = r"\w+\d+"):
@@ -380,28 +385,29 @@ def save_batch_images(filtered_intersection, paired, seg_paired, output_dir,
 def build_configurations():
     # Get available states
     available_states = Configuration.list_available_states()
-    
+
     # Load configuration
     if 'selected_state_file' not in st.session_state and available_states:
         st.session_state['selected_state_file'] = str(available_states[0])
-    
+
     if st.session_state.get('selected_state_file') and Path(st.session_state['selected_state_file']).exists():
         conf_instance = Configuration.load_from_json(st.session_state['selected_state_file'])
     else:
         conf_instance = Configuration()
 
     var_mapping = Configuration.mapper
-    
+
     # Initialize session state from config (only on first load)
     if 'config_initialized' not in st.session_state:
         for k, v in var_mapping.items():
             session_key = v.lower()
             setattr(st.session_state, session_key, getattr(conf_instance, v))
-        
+
         # Initialize display settings
-        for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width', 'slice_offset']:
+        for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width',
+                      'slice_offset']:
             st.session_state[field] = getattr(conf_instance, field)
-        
+
         st.session_state['config_initialized'] = True
 
     with st.expander('Configurations', expanded=st.session_state.get('require_setup', True)):
@@ -417,23 +423,26 @@ def build_configurations():
             selected_state = st.selectbox(
                 "Load State",
                 options=state_options,
-                index=state_options.index(st.session_state.get('selected_state_file', state_options[0])) if st.session_state.get('selected_state_file') in state_options else 0,
+                index=state_options.index(
+                    st.session_state.get('selected_state_file', state_options[0])) if st.session_state.get(
+                    'selected_state_file') in state_options else 0,
                 help="Select a saved state to load"
             )
             if selected_state != st.session_state.get('selected_state_file'):
                 logger.info(f"Loading state from {selected_state}")
                 st.session_state['selected_state_file'] = selected_state
-                
+
                 # Reload configuration and update session state
                 new_conf = Configuration.load_from_json(selected_state)
                 for k, v in var_mapping.items():
                     session_key = v.lower()
                     setattr(st.session_state, session_key, getattr(new_conf, v))
-                
+
                 # Update display settings
-                for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width', 'slice_offset']:
+                for field in ['image_window_range', 'attn_threshold', 'attn_opacity', 'contour_alpha', 'contour_width',
+                              'slice_offset']:
                     st.session_state[field] = getattr(new_conf, field)
-                
+
                 st.rerun()
 
         with st.form('config_form'):
@@ -453,7 +462,6 @@ def build_configurations():
                             value=st.session_state.get(v.lower(), getattr(conf_instance, v))
                         ))
 
-
             # Buttons
             col1, col2, _ = st.columns([1, 1, 3])
             with col1:
@@ -462,7 +470,7 @@ def build_configurations():
             with col2:
                 st.checkbox("Plot with segmentation", key="USE_SEGMENT")
                 # ====== Form end =======
-                
+
         if st.button("Save States", key="save_state_btn"):
             # Update config from session state
             for field_name, field in Configuration.model_fields.items():
@@ -572,7 +580,7 @@ else:
 csv_dir = st.session_state.csv_dir
 if csv_dir.is_file():
     csv_data = pd.read_csv(csv_dir, index_col=0)
-    csv_data.rename({'Prob_Class_0':PROB_CLASS_NAME}, axis=1, inplace=True)
+    csv_data.rename({'Prob_Class_0': PROB_CLASS_NAME}, axis=1, inplace=True)
 
     # If the csv is from simple inference, it will have a different format, handling it here
     # note that we require "Truth_0" column to be present. Otherwise, it's not meaningful to
@@ -585,6 +593,7 @@ if csv_dir.is_file():
         def _sigmoid(val):
             return 1 / (1 + np.exp(-val))
 
+
         logger.info("Adding Prob_0")
         csv_data[PROB_CLASS_NAME] = csv_data['OverallPrediction'].astype(float).apply(_sigmoid)
 
@@ -595,13 +604,17 @@ if csv_dir.is_file():
         logger.info("Calculating confusion matrix categories")
         # Do basic checking
         if set(csv_data['Decision_0'].unique().tolist()) - {0, 1, True, False}:
-            logger.warning("The 'Decision_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics.")
-            st.warning(f"The 'Decision_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics."
-                       f"{csv_data['Decision_0'].unique()}")
+            logger.warning(
+                "The 'Decision_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics.")
+            st.warning(
+                f"The 'Decision_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics."
+                f"{csv_data['Decision_0'].unique()}")
         if set(csv_data['Truth_0'].unique().tolist()) - {0, 1, True, False}:
-            logger.warning("The 'Truth_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics.")
-            st.warning(f"The 'Truth_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics."
-                       f"{csv_data['Truth_0'].unique()}")
+            logger.warning(
+                "The 'Truth_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics.")
+            st.warning(
+                f"The 'Truth_0' column contains values other than 0/1/True/False. This may cause issues with filtering and statistics."
+                f"{csv_data['Truth_0'].unique()}")
 
         csv_data['Confusion_Matrix'] = 'Unknown'
         csv_data['Decision_0'] = csv_data['Decision_0'].astype(int)
@@ -857,10 +870,10 @@ if selected_pair:
         except Exception as e:
             st.error(f"Cannot process this case. Original error: {e}")
             logger.exception(e)
-            IMAGE_DISPLAY_ERROR=True
+            IMAGE_DISPLAY_ERROR = True
 
     if IMAGE_DISPLAY_ERROR:
-        st.stop() # need to put stop here to prevent spinner keeps spinning. 
+        st.stop()  # need to put stop here to prevent spinner keeps spinning.
 
     # Load the result data and display them
     if selected_pair in filtered_csv_data.index:
@@ -941,7 +954,7 @@ if selected_pair:
 
     with col3:
         with st.expander("💾 Save Images"):
-            output_dir = st.session_state['output_dir'] 
+            output_dir = st.session_state['output_dir']
             output_dir = Path(output_dir)
 
             save_col1, save_col2 = st.columns([1, 1])

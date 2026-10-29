@@ -1,6 +1,7 @@
 import re
 import click
 import mnts
+import rAIdiologist
 from functools import partial
 from datetime import datetime
 from mnts.mnts_logger import MNTSLogger
@@ -13,8 +14,8 @@ import warnings
 import pprint
 
 DEFAULT_PARAMS = {
-    'mnts_state': Path(__file__).parent.joinpath('../../assets/T2w-fs'),
-    'mnts_graph': Path(__file__).parent.joinpath('../../assets/t2w_normalization.yaml')
+    'mnts_state': rAIdiologist.assets / 'T2w-fs',
+    'mnts_graph': rAIdiologist.t2w_normalization_cfg,
 }
 
 

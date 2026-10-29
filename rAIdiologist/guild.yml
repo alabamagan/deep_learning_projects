@@ -110,20 +110,6 @@
         - copy-checkpoint-pretrain-focused
         - copy-checkpoint-focused
 
-    train-scdense:
-      main: main_scdense
-      flags-dest: config:rAIdiologist/config/flags/flags_scdense.yaml
-      flags-import: all
-      output-scalars:
-        training/loss: 'EpochLoss: (\value)'
-        accuracy: 'ACC: (\value)'
-        training/validation_loss: 'VAL: (\value)'
-        step: 'Epoch (\step)'
-        training/step_lr: 'LR: (\value)'
-        training/validation_auc: 'AUC: (\value)'
-      requires:
-        - default
-
     train-ddp:
       main: main --ddp
       flags-dest: config:rAIdiologist/config/flags/flags.yaml

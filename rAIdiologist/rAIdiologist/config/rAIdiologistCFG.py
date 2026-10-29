@@ -1,17 +1,10 @@
-import os
 
-from pytorch_med_imaging.solvers import BinaryClassificationSolver, ClassificationSolver
-from pytorch_med_imaging.inferencers import BinaryClassificationInferencer, ClassificationInferencer
 from pytorch_med_imaging.controller import PMIControllerCFG
 from pytorch_med_imaging.pmi_data_loader import (PMIImageFeaturePairLoader, PMIImageFeaturePairLoaderCFG,
                                                  PMITorchioDataLoader, PMITorchioDataLoaderCFG)
-from pytorch_med_imaging.solvers.earlystop import LossReferenceEarlyStop
 from .network.rAIdiologist import rAIdiologist
-from .network.slicewise_ran import SlicewiseAttentionRAN
 from .loss.rAIdiologist_loss import ConfidenceBCELoss
-from ..solvers.rAIdiologistSolver import *
-from dataclasses import asdict
-import copy
+from ..solvers.rAIdiologistSolver import rAIdiologistSolverCFG
 from datetime import datetime
 from typing import *
 import torch

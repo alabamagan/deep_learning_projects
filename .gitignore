@@ -16,3 +16,11 @@ build/
 .DS_Store
 *.sqlite3
 
+# VS code
+.vscode
+
+# Agent tools
+CLAUDE.md
+AGENT.md
+.omp
+.claude
